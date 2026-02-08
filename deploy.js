@@ -99,6 +99,10 @@ async function main() {
             rewards.recipients.push({ recipient: process.env.REWARD_CREATOR, bps: 9990, token: "Both" });
             rewards.recipients.push({ recipient: process.env.REWARD_INTERFACE, bps: 10, token: "Both" });
         } else {
+            if (!rewardRecipient) {
+                console.error("❌ Error: Missing TOKEN_ADMIN/REWARD_RECIPIENT (or REWARD_CREATOR + REWARD_INTERFACE).");
+                process.exit(1);
+            }
             rewards.recipients.push({ recipient: rewardRecipient, bps: 10000, token: "Both" });
         }
     }
@@ -118,6 +122,7 @@ async function main() {
     addSocial('x', process.env.SOCIAL_X);
     addSocial('telegram', process.env.SOCIAL_TELEGRAM);
     addSocial('farcaster', process.env.SOCIAL_FARCASTER);
+    addSocial('website', process.env.SOCIAL_WEBSITE);
 
     const context = {
         interface: "Clanker SDK",
@@ -135,7 +140,20 @@ async function main() {
     const tickSpacing = 200;
     const startingTick = Math.round(parseInt(process.env.POOL_STARTING_TICK || "-230400") / tickSpacing) * tickSpacing;
     let poolPositions = POOL_POSITIONS[poolType] || POOL_POSITIONS.Standard;
-    if (poolType === "Standard" && !process.env.POOL_POSITIONS_JSON) {
+    if (process.env.POOL_POSITIONS_JSON) {
+        try {
+            const parsedPositions = JSON.parse(process.env.POOL_POSITIONS_JSON);
+            if (Array.isArray(parsedPositions) && parsedPositions.length > 0) {
+                poolPositions = parsedPositions;
+            } else {
+                console.error("❌ Error: POOL_POSITIONS_JSON must be a non-empty array.");
+                process.exit(1);
+            }
+        } catch (e) {
+            console.error("❌ Error parsing POOL_POSITIONS_JSON");
+            process.exit(1);
+        }
+    } else if (poolType === "Standard") {
         poolPositions = [{ tickLower: startingTick, tickUpper: startingTick + 110400, positionBps: 10000 }];
     }
 

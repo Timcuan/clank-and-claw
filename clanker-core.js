@@ -14,6 +14,13 @@ export async function deployToken(config, options = {}) {
         dryRun = process.env.DRY_RUN === 'true'
     } = options;
 
+    console.log(`\n⏳ Deploying "${config.name}" (${config.symbol})...`);
+
+    if (dryRun) {
+        console.log('\n✅ DRY RUN: Configuration valid. Skipping deployment.');
+        return { success: true, dryRun: true, config };
+    }
+
     if (!privateKey) {
         throw new Error('PRIVATE_KEY is required for deployment.');
     }
@@ -23,13 +30,6 @@ export async function deployToken(config, options = {}) {
     const publicClient = createPublicClient({ chain: base, transport: http(rpcUrl) });
     const walletClient = createWalletClient({ account, chain: base, transport: http(rpcUrl) });
     const clanker = new Clanker({ publicClient, wallet: walletClient });
-
-    console.log(`\n⏳ Deploying "${config.name}" (${config.symbol})...`);
-
-    if (dryRun) {
-        console.log('\n✅ DRY RUN: Configuration valid. Skipping deployment.');
-        return { success: true, dryRun: true, config };
-    }
 
     try {
         const { txHash, waitForTransaction, error } = await clanker.deploy(config);

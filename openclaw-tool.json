@@ -1,0 +1,53 @@
+{
+    "name": "clanker_deploy_token",
+    "description": "Deploys an ERC-20 token on Base with automated liquidity. Requires name, symbol, image URL, and description.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "TOKEN_NAME": {
+                "type": "string",
+                "description": "The name of the token (e.g., 'ClawBot AI')"
+            },
+            "TOKEN_SYMBOL": {
+                "type": "string",
+                "description": "The ticker symbol (e.g., 'CLAW')"
+            },
+            "TOKEN_IMAGE": {
+                "type": "string",
+                "description": "Image URL or IPFS CID for the token logo"
+            },
+            "METADATA_DESCRIPTION": {
+                "type": "string",
+                "description": "Project description for ClankerWorld verification"
+            },
+            "CONTEXT_MESSAGE_ID": {
+                "type": "string",
+                "description": "Warpcast URL or Cast Hash for social indexing"
+            },
+            "DEV_BUY_ETH_AMOUNT": {
+                "type": "number",
+                "description": "Amount of ETH to buy at launch (minimum 0.001 recommended for indexing)"
+            },
+            "HIGH_TAX": {
+                "type": "boolean",
+                "description": "DEGEN MODE: If true, allows fees up to 20% (static) or 30% (dynamic). Use for viral/short-term hype tokens. Note: This loses the Clankerworld Verified Badge."
+            },
+            "ADMIN_SPOOF": {
+                "type": "string",
+                "description": "Privacy Masking: Address that will receive the rewards, different from the token owner (Admin). Useful for hiding the dev's primary wallet."
+            },
+            "STRICT_MODE": {
+                "type": "boolean",
+                "default": true,
+                "description": "Enforce Clankerworld checklist compliance (max 5% fees). Use this for serious long-term projects to get the verified badge."
+            }
+        },
+        "required": [
+            "TOKEN_NAME",
+            "TOKEN_SYMBOL",
+            "TOKEN_IMAGE",
+            "METADATA_DESCRIPTION",
+            "CONTEXT_MESSAGE_ID"
+        ]
+    }
+}

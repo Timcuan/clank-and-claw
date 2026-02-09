@@ -1,13 +1,16 @@
+
 import { Clanker } from 'clanker-sdk/v4';
 import { createWalletClient, createPublicClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { base } from 'viem/chains';
 
 /**
- * 🚀 Core Token Deployment
+ * 🚀 Clanker Core Deployment Module v2.5
  * 
- * Robust deployment with proper error handling and status updates.
+ * Handles blockchain interactions, gas estimation, and deployment execution.
+ * Includes improved error handling and feedback.
  */
+
 export async function deployToken(config, options = {}) {
     const {
         privateKey = process.env.PRIVATE_KEY,
@@ -15,123 +18,108 @@ export async function deployToken(config, options = {}) {
         dryRun = process.env.DRY_RUN === 'true'
     } = options;
 
-    console.log(`\n⏳ Deploying "${config.name}" (${config.symbol})...`);
+    console.log(`\n⏳ \x1b[36mInitializing Deployment Sequence...\x1b[0m`);
 
-    // Dry run mode
+    // 1. Dry Run Check
     if (dryRun) {
-        console.log('\n✅ DRY RUN: Configuration valid. Skipping deployment.');
+        console.log(`\n✅ \x1b[32mDRY RUN MODE ACTIVE\x1b[0m`);
+        console.log(`   Configuration for "${config.name}" (${config.symbol}) is valid.`);
+        console.log(`   Spoofing: ${config._meta?.rewardRecipient ? 'Active' : 'Inactive'}`);
         return {
             success: true,
             dryRun: true,
             config,
-            address: null,
-            txHash: null
+            address: '0x(dry-run-address)',
+            scanUrl: 'https://basescan.org/address/0x(dry-run)',
+            deployer: '0x(dry-run-deployer)'
         };
     }
 
-    // Validate private key
-    if (!privateKey) {
-        throw new Error('PRIVATE_KEY is required for deployment');
-    }
+    // 2. Credential Validation
+    if (!privateKey) throw new Error('PRIVATE_KEY is missing');
 
-    const cleanKey = privateKey.startsWith('0x') ? privateKey : `0x${privateKey}`;
+    let cleanKey = privateKey.trim();
+    if (!cleanKey.startsWith('0x')) cleanKey = `0x${cleanKey}`;
 
-    if (cleanKey.length !== 66) {
-        throw new Error('Invalid PRIVATE_KEY format');
-    }
+    if (cleanKey.length !== 66) throw new Error('Invalid PRIVATE_KEY length (must be 64 chars + 0x)');
 
     try {
-        // Initialize clients
+        // 3. Network Connection
         const account = privateKeyToAccount(cleanKey);
+
         const publicClient = createPublicClient({
             chain: base,
-            transport: http(rpcUrl, { timeout: 60000 })
+            transport: http(rpcUrl, {
+                timeout: 60000,
+                retryCount: 3
+            })
         });
+
         const walletClient = createWalletClient({
             account,
             chain: base,
-            transport: http(rpcUrl, { timeout: 60000 })
+            transport: http(rpcUrl, {
+                timeout: 60000,
+                retryCount: 3
+            })
         });
 
-        // Check balance
+        // 4. Pre-Flight Checks
         const balance = await publicClient.getBalance({ address: account.address });
-        const minBalance = BigInt(0.005 * 1e18); // 0.005 ETH minimum
+        const costEstimate = BigInt(0.005 * 1e18); // Conservative estimate
 
-        if (balance < minBalance) {
+        if (balance < costEstimate) {
             const eth = Number(balance) / 1e18;
-            throw new Error(`Insufficient balance: ${eth.toFixed(4)} ETH (need at least 0.005 ETH for gas)`);
+            throw new Error(`Insufficient Balance: ${eth.toFixed(4)} ETH (Need ~0.005 ETH)`);
         }
 
-        console.log(`📍 Deployer: ${account.address}`);
-        console.log(`💰 Balance: ${(Number(balance) / 1e18).toFixed(4)} ETH`);
+        console.log(`📍 \x1b[33mDeployer:\x1b[0m ${account.address}`);
+        console.log(`💰 \x1b[33mBalance:\x1b[0m  ${(Number(balance) / 1e18).toFixed(4)} ETH`);
 
-        // Initialize Clanker
+        // 5. Initialize SDK
         const clanker = new Clanker({ publicClient, wallet: walletClient });
 
-        // Deploy
+        // 6. Execute Deployment
+        console.log(`\n🚀 \x1b[36mSending transaction...\x1b[0m`);
         const { txHash, waitForTransaction, error: deployError } = await clanker.deploy(config);
 
-        if (deployError) {
-            console.error('❌ Deploy error:', deployError);
-            return {
-                success: false,
-                error: deployError,
-                address: null,
-                txHash: null
-            };
-        }
+        if (deployError) throw new Error(`Deploy Request Failed: ${deployError}`);
+        if (!txHash) throw new Error('No Transaction Hash returned');
 
-        console.log(`✅ TX Hash: ${txHash}`);
-        console.log('⏳ Waiting for confirmation...');
+        console.log(`✅ \x1b[32mTX Sent:\x1b[0m ${txHash}`);
+        console.log(`⏳ Waiting for confirmation...`);
 
-        // Wait for transaction
-        const result = await waitForTransaction();
+        // 7. Wait for Receipt
+        const receipt = await waitForTransaction();
 
-        if (result.error) {
-            console.error('❌ Transaction error:', result.error);
-            return {
-                success: false,
-                error: result.error,
-                txHash,
-                address: null
-            };
-        }
+        if (receipt.error) throw new Error(`Transaction Reverted: ${receipt.error}`);
+        if (!receipt.address) throw new Error('No Contract Address in receipt');
 
-        const { address } = result;
-        const scanUrl = `https://basescan.org/address/${address}`;
+        const scanUrl = `https://basescan.org/address/${receipt.address}`;
 
-        console.log(`\n🎉 Token deployed!`);
-        console.log(`📍 Address: ${address}`);
-        console.log(`🔗 ${scanUrl}`);
+        console.log(`\n🎉 \x1b[32mToken Deployed Successfully!\x1b[0m`);
 
         return {
             success: true,
             dryRun: false,
-            address,
+            address: receipt.address,
             txHash,
             scanUrl,
             deployer: account.address
         };
 
     } catch (error) {
-        // Parse common errors
-        let errorMessage = error.message || String(error);
+        let msg = error.message || String(error);
 
-        if (errorMessage.includes('insufficient funds')) {
-            errorMessage = 'Insufficient ETH for gas fees';
-        } else if (errorMessage.includes('nonce')) {
-            errorMessage = 'Nonce error - try again in a moment';
-        } else if (errorMessage.includes('replacement')) {
-            errorMessage = 'Transaction pending - wait or increase gas';
-        } else if (errorMessage.includes('rejected')) {
-            errorMessage = 'Transaction rejected by network';
-        }
+        // Friendly Error Parsing
+        if (msg.includes('insufficient funds')) msg = 'Insufficient ETH for gas';
+        else if (msg.includes('User rejected')) msg = 'User rejected transaction';
 
-        console.error(`\n❌ Deployment failed: ${errorMessage}`);
+        console.error(`\n❌ \x1b[31mDEPLOYMENT ERROR:\x1b[0m ${msg}`);
 
         return {
             success: false,
-            error: errorMessage,
+            error: msg,
             address: null,
             txHash: null
         };

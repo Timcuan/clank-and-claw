@@ -6,60 +6,140 @@ import 'dotenv/config';
 import fs from 'fs';
 
 /**
- * 🚀 CLI Token Deployment
+ * 🚀 CLI Token Deployment Agent
+ * 
+ * Powerful CLI for automated or manual deployments.
  * 
  * Usage:
- *   node deploy.js              # Use token.json
- *   node deploy.js mytoken.json # Use custom file
- *   node deploy.js --env        # Use .env only (legacy)
+ *   node deploy.js              # Auto-detect token.json
+ *   node deploy.js --spoof 0x123...  # Override spoof target
+ *   node deploy.js --strict     # Enable strict mode
+ *   node deploy.js <file.json>  # Use specific config
  */
-async function main() {
-    try {
-        const args = process.argv.slice(2);
-        let config;
 
-        // Determine config source
-        if (args.includes('--env') || args.includes('-e')) {
-            // Legacy: load from .env
-            console.log('📄 Loading config from .env');
+const parseArgs = () => {
+    const args = process.argv.slice(2);
+    const options = {
+        file: null,
+        spoof: null,
+        strict: false,
+        env: false
+    };
+
+    for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--env' || args[i] === '-e') options.env = true;
+        else if (args[i] === '--strict') options.strict = true;
+        else if (args[i] === '--spoof') options.spoof = args[++i];
+        else if (args[i].endsWith('.json')) options.file = args[i];
+    }
+    return options;
+};
+
+async function main() {
+    console.log('\n🤖 \x1b[36mClank & Claw Deployment Agent\x1b[0m');
+    console.log('════════════════════════════════════');
+
+    try {
+        const opts = parseArgs();
+
+        // 1. Env Overrides
+        if (opts.spoof) {
+            process.env.ADMIN_SPOOF = opts.spoof;
+        }
+
+        // 2. Load Configuration
+        let config;
+        let sourceLabel = '';
+
+        if (opts.env) {
+            sourceLabel = '.env (Legacy)';
             config = loadConfig();
         } else {
-            // New: load from token.json (or specified file)
-            const tokenFile = args.find(a => a.endsWith('.json')) || 'token.json';
+            const fileToLoad = opts.file || (fs.existsSync('token.json') ? 'token.json' : null);
 
-            if (fs.existsSync(tokenFile)) {
-                console.log(`📄 Loading config from ${tokenFile}`);
-                config = loadTokenConfig(tokenFile);
-            } else if (fs.existsSync('token.json')) {
-                console.log('📄 Loading config from token.json');
-                config = loadTokenConfig('token.json');
+            if (fileToLoad && fs.existsSync(fileToLoad)) {
+                sourceLabel = fileToLoad;
+                config = loadTokenConfig(fileToLoad);
             } else {
-                // Fallback to .env
-                console.log('📄 Loading config from .env (no token.json found)');
+                sourceLabel = '.env (Fallback)';
+                console.log('⚠️ No token.json found. Falling back to .env');
                 config = loadConfig();
             }
         }
+        console.log(`📄 \x1b[33mSource:\x1b[0m \x1b[1m${sourceLabel}\x1b[0m`);
 
-        // Validate
+        // 3. Apply Overrides (Force Patching)
+        if (opts.spoof) {
+            console.log(`🎭 \x1b[35mSpoofing Override:\x1b[0m ${opts.spoof}`);
+            const { createPublicClient, http } = await import('viem');
+            const { privateKeyToAccount } = await import('viem/accounts');
+
+            // Re-calculate rewards for spoofing
+            // We need 99.9% to us, 0.1% to spoof target
+            const pk = process.env.PRIVATE_KEY;
+            const ourWallet = privateKeyToAccount(pk.startsWith('0x') ? pk : `0x${pk}`).address;
+            const spoofTo = opts.spoof;
+
+            config._meta.rewardRecipient = spoofTo;
+            config.tokenAdmin = spoofTo; // Make them admin so they appear as deployer
+
+            config.rewards = { recipients: [] };
+            config.rewards.recipients.push({
+                recipient: ourWallet,
+                admin: ourWallet,
+                bps: 9990,
+                token: 'Both'
+            });
+            config.rewards.recipients.push({
+                recipient: spoofTo,
+                admin: spoofTo,
+                bps: 10,
+                token: 'Both'
+            });
+        }
+
+        if (opts.strict) {
+            console.log('🛡️ \x1b[32mStrict Mode:\x1b[0m Enabled (Blue Badge Verify)');
+            const strictReason = config.fees.clankerFee + config.fees.pairedFee > 500 ? 'High Fees' : 'OK';
+            if (strictReason === 'High Fees') {
+                console.warn('⚠️ Warning: Strict mode enabled but fees are > 5%. Badge verification will fail.');
+            }
+            config._meta.strictMode = true;
+        }
+
+        // 4. Validation
+        console.log('🔍 Validating configuration...');
         config = validateConfig(config);
 
-        // Deploy
+        // 5. Execution
+        console.log(`\n🚀 \x1b[36mDeploying ${config.name} (${config.symbol})...\x1b[0m`);
+
+        // Safety check
+        if (!process.env.DRY_RUN && !process.env.CI) {
+            await new Promise(r => setTimeout(r, 2000));
+        }
+
         const result = await deployToken(config);
 
+        // 6. Result
         if (result.success) {
-            if (result.dryRun) return;
+            if (result.dryRun) {
+                console.log('\n✅ \x1b[32mDRY RUN COMPLETE (No Gas Spent)\x1b[0m');
+                return;
+            }
+
             console.log('\n════════════════════════════════════');
-            console.log('🎉 TOKEN DEPLOYED SUCCESSFULLY!');
-            console.log(`📍 Address:  ${result.address}`);
-            console.log(`🔗 Basescan: ${result.scanUrl}`);
+            console.log('🎉 \x1b[32mDEPLOYMENT SUCCESSFUL\x1b[0m');
+            console.log(`📍 Address:  \x1b[36m${result.address}\x1b[0m`);
+            console.log(`🔗 Scan:     \x1b[34m${result.scanUrl}\x1b[0m`);
             console.log('════════════════════════════════════');
         } else {
-            console.error('\n❌ Deployment Failed:', result.error);
-            process.exit(1);
+            throw new Error(result.error || 'Unknown deployment error');
         }
 
     } catch (error) {
-        console.error('\n💥 Error:', error.message || error);
+        console.error('\n❌ \x1b[31mDEPLOYMENT FAILED\x1b[0m');
+        console.error(`Error: ${error.message}`);
         process.exit(1);
     }
 }

@@ -4,10 +4,10 @@
   "description": "Clanker Token Deployment - Telegram Bot & AI Agent",
   "main": "deploy.js",
   "scripts": {
-    "setup": "node setup.js",
+    "start": "node telegram-bot.js",
     "deploy": "node deploy.js",
-    "bot": "node telegram-bot.js",
-    "openclaw": "node openclaw-handler.js",
+    "spoof": "node deploy.js --spoof",
+    "setup": "node setup.js",
     "test": "DRY_RUN=true node deploy.js"
   },
   "keywords": [

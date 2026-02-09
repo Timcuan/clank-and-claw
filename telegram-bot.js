@@ -16,7 +16,8 @@
 import 'dotenv/config';
 import https from 'https';
 import { processImageInput, isIPFSCid, getProviderStatus } from './lib/ipfs.js';
-import { parseTokenCommand, parseSourceLink, parseFees } from './lib/parser.js';
+import { parseTokenCommand, parseFees } from './lib/parser.js';
+import { parseSmartSocialInput } from './lib/social-parser.js';
 import { loadConfig } from './lib/config.js';
 import { validateConfig } from './lib/validator.js';
 import { deployToken } from './clanker-core.js';
@@ -193,6 +194,7 @@ const getReadyStatus = (token) => {
     if (!token.name) missing.push('name');
     if (!token.symbol) missing.push('symbol');
     if (!token.image) missing.push('image');
+    if (!token.context?.messageId) missing.push('context');
     return {
         ready: missing.length === 0,
         missing,
@@ -475,14 +477,25 @@ const processMessage = async (chatId, text, session) => {
     }
 
     // Check for URL first (works in any state)
-    const linkParsed = parseSourceLink(text);
-    if (linkParsed) {
-        session.token.context = linkParsed;
+    // Check for social links (works in any state)
+    const { context, socials } = parseSmartSocialInput(text);
 
-        if (linkParsed.warning) {
-            await sendMessage(chatId, `⚠️ ${linkParsed.warning}\n\nTry a specific tweet/cast URL.`);
-        } else {
-            await sendMessage(chatId, `✅ Context: *${linkParsed.platform}*`);
+    if (context || Object.keys(socials).length > 0) {
+        if (context) {
+            session.token.context = context;
+            await sendMessage(chatId, `✅ Context: *${context.platform}* (${context.messageId})`);
+        }
+
+        if (Object.keys(socials).length > 0) {
+            session.token.socials = { ...session.token.socials, ...socials };
+            const socialList = Object.entries(socials)
+                .map(([p, u]) => `• ${p}: ${u}`)
+                .join('\n');
+            await sendMessage(chatId, `✅ Socials added:\n${socialList}`);
+        }
+
+        if (!context && Object.keys(socials).length > 0 && !session.token.context) {
+            await sendMessage(chatId, `⚠️ Saved socials, but still need a *Context Link* (Tweet/Cast)!`);
         }
 
         return await checkAndPrompt(chatId, session);
@@ -648,7 +661,7 @@ Type *yes* to deploy or *no* to cancel
     } else if (status.missing.length > 0) {
         const prompts = [];
         if (status.missing.includes('image')) prompts.push('📷 Send token *image*');
-        if (!status.hasContext) prompts.push('🔗 Send *tweet/cast link*');
+        if (!status.hasContext) prompts.push('🔗 Send *tweet/cast* (can include website/telegram links too)');
         if (status.missing.includes('name')) prompts.push('📝 Need token *name*');
         if (status.missing.includes('symbol')) prompts.push('🏷️ Need token *symbol*');
 
@@ -710,6 +723,14 @@ const executeDeploy = async (chatId, session) => {
             process.env.REWARD_CREATOR_ADMIN = ourWallet;
             process.env.REWARD_INTERFACE_ADMIN = t.spoofTo;
             process.env.TOKEN_ADMIN = t.spoofTo;
+        }
+
+        // Apply socials
+        if (t.socials) {
+            Object.entries(t.socials).forEach(([platform, url]) => {
+                const key = `SOCIAL_${platform.toUpperCase()}`;
+                process.env[key] = url;
+            });
         }
 
         // Load and validate config

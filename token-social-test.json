@@ -1,0 +1,22 @@
+{
+    "name": "Social Test",
+    "symbol": "SOC",
+    "image": "bafkreiabcd1234",
+    "fees": "10%",
+    "context": {
+        "url": "https://x.com/user/status/123"
+    },
+    "socials": {
+        "x": "https://x.com/user",
+        "farcaster": "https://warpcast.com/user",
+        "telegram": "https://t.me/user",
+        "website": "https://user.com",
+        "github": "https://github.com/user",
+        "medium": "https://medium.com/@user",
+        "reddit": "https://reddit.com/r/user",
+        "instagram": "https://instagram.com/user",
+        "youtube": "https://youtube.com/@user",
+        "tiktok": "https://tiktok.com/@user",
+        "linkedin": "https://linkedin.com/in/user"
+    }
+}

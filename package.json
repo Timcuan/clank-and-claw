@@ -1,18 +1,21 @@
 {
   "name": "clank-and-claw",
-  "version": "2.0.0",
-  "description": "Clanker Token Deployment Tool with High Tax Support",
+  "version": "2.1.0",
+  "description": "Clanker Token Deployment Tool with Telegram Bot & AI Agent Support",
   "main": "deploy.js",
   "scripts": {
     "deploy": "node deploy.js",
     "openclaw": "node openclaw-handler.js",
+    "bot": "node telegram-bot.js",
     "test": "DRY_RUN=true node deploy.js"
   },
   "keywords": [
     "clanker",
     "base",
     "token",
-    "deployment"
+    "deployment",
+    "telegram",
+    "bot"
   ],
   "author": "Timcuan",
   "license": "MIT",

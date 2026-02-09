@@ -119,6 +119,16 @@ node openclaw-handler.js "$@"
 EOF
 chmod +x ~/openclaw.sh
 
+# Telegram bot runner
+cat > ~/run-bot.sh << 'EOF'
+#!/bin/bash
+cd ~/clank-and-claw
+echo "🤖 Starting Clank & Claw Telegram Bot..."
+echo "   Press Ctrl+C to stop"
+node telegram-bot.js
+EOF
+chmod +x ~/run-bot.sh
+
 # ─────────────────────────────────────────
 # Done!
 # ─────────────────────────────────────────
@@ -132,11 +142,11 @@ echo ""
 echo "🚀 Quick Commands:"
 echo "   ~/deploy-token.sh              # Deploy from .env"
 echo "   ~/openclaw.sh --file input.json # Deploy from JSON"
-echo "   echo '{...}' | ~/openclaw.sh   # Deploy via stdin"
+echo "   ~/run-bot.sh                   # Start Telegram bot"
 echo ""
-echo "📝 First Steps:"
-echo "   1. nano ~/clank-and-claw/.env  # Add your PRIVATE_KEY"
-echo "   2. ~/deploy-token.sh           # Deploy!"
+echo "🤖 Telegram Bot Setup:"
+echo "   1. nano ~/clank-and-claw/.env  # Add TELEGRAM_BOT_TOKEN"
+echo "   2. ~/run-bot.sh"
 echo ""
 echo "💡 Use tmux for persistent sessions:"
 echo "   tmux new -s claw"

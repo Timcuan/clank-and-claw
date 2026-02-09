@@ -1,8 +1,6 @@
-# 🐾 Clank & Claw v2.0
+# 🐾 Clank & Claw v2.1
 
-Deploy ERC-20 tokens on **Base** blockchain with automated liquidity using **Clanker SDK v4**.
-
-Optimized for **AI Agent** integration and **VPS deployment**.
+Deploy ERC-20 tokens on **Base** blockchain via CLI, AI Agent, or **Telegram Bot**.
 
 ## 🚀 Quick Start
 
@@ -10,8 +8,7 @@ Optimized for **AI Agent** integration and **VPS deployment**.
 git clone https://github.com/Timcuan/clank-and-claw.git
 cd clank-and-claw && npm install
 cp .env.example .env
-# Edit .env with your PRIVATE_KEY
-node deploy.js
+# Edit .env with your credentials
 ```
 
 ## 📁 Project Structure
@@ -19,29 +16,89 @@ node deploy.js
 ```
 clank-and-claw/
 ├── deploy.js              # CLI deployment
+├── telegram-bot.js        # 🆕 Telegram bot
+├── openclaw-handler.js    # AI agent interface
 ├── clanker-core.js        # SDK wrapper
-├── openclaw-handler.js    # AI agent interface (JSON in/out)
-├── openclaw-tool.json     # AI tool schema
 ├── lib/
 │   ├── config.js          # Configuration loader
 │   ├── validator.js       # Validation logic
+│   ├── parser.js          # 🆕 Link & command parser
+│   ├── ipfs.js            # 🆕 IPFS/Pinata uploader
 │   └── utils.js           # Utilities
-├── vps-setup.sh           # One-command VPS setup
-└── .env.example           # Configuration template
+└── .env.example
 ```
+
+---
+
+## 🤖 Telegram Bot
+
+Deploy tokens directly from Telegram chat!
+
+### Setup
+
+1. Create bot with [@BotFather](https://t.me/BotFather)
+2. Get API keys from [Pinata](https://pinata.cloud)
+3. Add to `.env`:
+```bash
+TELEGRAM_BOT_TOKEN=123456:ABC...
+TELEGRAM_ADMIN_IDS=12345678,87654321  # Optional: restrict access
+PINATA_API_KEY=your_key
+PINATA_SECRET_KEY=your_secret
+```
+4. Run: `npm run bot`
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/deploy` | Start deployment wizard |
+| `/quick SYMBOL "Name" 10%` | Quick deploy |
+| `/status` | Check wallet balance |
+| `/help` | Show help |
+| `/cancel` | Cancel current operation |
+
+### Usage Examples
+
+**Wizard Mode:**
+```
+/deploy
+> Pepe Token
+> PEPE
+> 10%
+> [send image]
+> https://x.com/user/status/123
+> yes
+```
+
+**Quick Mode:**
+```
+/quick DOGE "Dogecoin 2.0" 5%
+[send image]
+https://x.com/user/status/456
+```
+
+**Natural Language:**
+```
+Deploy PEPE (Pepe Token) with 10% fees
+[send image]
+https://x.com/user/status/789
+```
+
+### Features
+
+- 📷 **Auto IPFS Upload**: Send any image → automatically uploaded to Pinata
+- 🔗 **Auto Link Parse**: Send tweet/cast URL → extracted for indexing
+- 💬 **Natural Language**: Understands "Deploy SYMBOL (Name) 10%"
+- 🛡️ **Admin Restriction**: Limit bot access to specific chat IDs
 
 ---
 
 ## 🤖 AI Agent Integration
 
-### Tool Schema
-Use `openclaw-tool.json` for your AI agent's function calling definition.
-
-### JSON Input/Output
-The handler accepts JSON and returns JSON - perfect for AI agents:
+### JSON Interface
 
 ```bash
-echo '{"name":"MyToken","symbol":"MTK","image":"bafk..."}' | node openclaw-handler.js
+echo '{"name":"Token","symbol":"TKN","image":"bafk..."}' | node openclaw-handler.js
 ```
 
 **Response:**
@@ -50,111 +107,52 @@ echo '{"name":"MyToken","symbol":"MTK","image":"bafk..."}' | node openclaw-handl
   "success": true,
   "address": "0x...",
   "txHash": "0x...",
-  "scanUrl": "https://basescan.org/address/0x...",
+  "scanUrl": "https://basescan.org/...",
   "logs": [...]
 }
 ```
 
-### Minimal Example
-```json
-{
-  "name": "MyToken",
-  "symbol": "MTK",
-  "image": "bafkreiesnzcilwuuisbrzznvwqozqlgodz7t7a4amhvpurv65nnjfuodbq"
-}
-```
+### Tool Schema
 
-### Full Example
-```json
-{
-  "name": "Premium Token",
-  "symbol": "PREM",
-  "image": "bafkrei...",
-  "description": "A premium token with custom fees",
-  "admin": "0xYourWallet",
-  "fees": {
-    "clankerFee": 250,
-    "pairedFee": 250
-  },
-  "context": {
-    "platform": "twitter",
-    "messageId": "https://x.com/user/status/123456789"
-  },
-  "socials": {
-    "x": "https://x.com/myproject"
-  },
-  "sniperFees": {
-    "startingFee": 666777,
-    "endingFee": 41673,
-    "secondsToDecay": 15
-  },
-  "vanity": true,
-  "dryRun": false
-}
-```
-
-### Input Methods
-```bash
-# Stdin (recommended for AI)
-echo '{"name":"Test",...}' | node openclaw-handler.js
-
-# File
-node openclaw-handler.js --file config.json
-
-# Environment variable
-OPENCLAW_INPUT='{"name":"Test",...}' node openclaw-handler.js
-```
-
----
-
-## 🖥️ VPS Deployment
-
-### One-Command Setup
-```bash
-curl -sL https://raw.githubusercontent.com/Timcuan/clank-and-claw/main/vps-setup.sh | bash
-```
-
-### After Setup
-```bash
-nano ~/clank-and-claw/.env   # Add PRIVATE_KEY
-~/deploy-token.sh            # Deploy from .env
-~/openclaw.sh --file x.json  # Deploy from JSON
-```
-
-### What the Script Does
-- Installs Node.js LTS, git, tmux, jq, ufw
-- Clones/updates the repository
-- Creates `.env` from template
-- Enables firewall (OpenSSH allowed)
-- Hardens SSH (key-only if keys exist)
-- Creates helper scripts
+Use `openclaw-tool.json` for function calling definitions.
 
 ---
 
 ## ⚙️ Configuration
 
-### Required Fields
+### Required
+
 | Field | Description |
 |-------|-------------|
-| `name` | Token name |
-| `symbol` | Token ticker |
-| `image` | IPFS CID or HTTPS URL |
+| `PRIVATE_KEY` | Deployer wallet |
+| `TELEGRAM_BOT_TOKEN` | For Telegram bot |
+| `PINATA_API_KEY` | For image upload |
+| `PINATA_SECRET_KEY` | For image upload |
 
-### Optional Fields
-| Field | Default | Description |
-|-------|---------|-------------|
-| `admin` | from .env | Wallet that owns the token |
-| `fees.clankerFee` | 100 | Token side fee (bps) |
-| `fees.pairedFee` | 100 | WETH side fee (bps) |
-| `vanity` | true | Request vanity address |
-| `dryRun` | false | Validate without deploying |
-| `strictMode` | false | Enforce Blue Badge requirements |
+### Fee Formats
 
-### Fee Reference
-- `100 bps = 1%`
-- `500 bps = 5%`
-- `1000 bps = 10%`
-- No restrictions - set any value 0-9900
+| Format | Meaning |
+|--------|---------|
+| `10%` | 5% + 5% split |
+| `5% 5%` | Explicit split |
+| `500bps` | 500 basis points |
+| `250 250` | bps split |
+
+---
+
+## 🖥️ VPS Deployment
+
+```bash
+curl -sL https://raw.githubusercontent.com/Timcuan/clank-and-claw/main/vps-setup.sh | bash
+```
+
+### Run Bot in Background
+
+```bash
+tmux new -s claw
+npm run bot
+# Ctrl+B, D to detach
+```
 
 ---
 

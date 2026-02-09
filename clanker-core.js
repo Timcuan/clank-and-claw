@@ -73,11 +73,12 @@ export async function deployToken(config, options = {}) {
             publicClient.getGasPrice()
         ]);
 
-        const costEstimate = BigInt(0.005 * 1e18); // ~0.005 ETH buffer
+        const costEstimate = BigInt(0.001 * 1e18); // Reduced to 0.001 ETH buffer for Base
 
         if (balance < costEstimate) {
             const eth = Number(balance) / 1e18;
-            throw new Error(`Insufficient Balance: ${eth.toFixed(4)} ETH (Need ~0.005 ETH)`);
+            console.warn(`⚠️ \x1b[33mLow Balance Warning:\x1b[0m ${eth.toFixed(4)} ETH. Deployment might fail if gas spikes.`);
+            // Removed throw Error to allow "Degen Mode" deployment
         }
 
         // Gas Warning
@@ -93,7 +94,11 @@ export async function deployToken(config, options = {}) {
 
         // 6. Execute Deployment
         console.log(`\n🚀 \x1b[36mSending transaction...\x1b[0m`);
-        const { txHash, waitForTransaction, error: deployError } = await clanker.deploy(config);
+
+        // Sanitize config for SDK (remove internal keys)
+        const { _meta, ...sdkConfig } = config;
+
+        const { txHash, waitForTransaction, error: deployError } = await clanker.deploy(sdkConfig);
 
         if (deployError) throw new Error(`Deploy Request Failed: ${deployError}`);
         if (!txHash) throw new Error('No Transaction Hash returned from SDK');

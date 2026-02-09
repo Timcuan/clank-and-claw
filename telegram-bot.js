@@ -15,7 +15,7 @@
 
 import 'dotenv/config';
 import https from 'https';
-import { processImageInput, isIPFSCid } from './lib/ipfs.js';
+import { processImageInput, isIPFSCid, getProviderStatus } from './lib/ipfs.js';
 import { parseTokenCommand, parseSourceLink, parseFees } from './lib/parser.js';
 import { loadConfig } from './lib/config.js';
 import { validateConfig } from './lib/validator.js';
@@ -188,13 +188,6 @@ const validatePrivateKey = () => {
     return { valid: true };
 };
 
-const validatePinata = () => {
-    const key = process.env.PINATA_API_KEY;
-    const secret = process.env.PINATA_SECRET_KEY;
-    if (!key || !secret) return { valid: false, error: 'Pinata not configured' };
-    return { valid: true };
-};
-
 const getReadyStatus = (token) => {
     const missing = [];
     if (!token.name) missing.push('name');
@@ -213,10 +206,15 @@ const getReadyStatus = (token) => {
 
 const handleStart = async (chatId, username) => {
     const pkCheck = validatePrivateKey();
-    const pinataCheck = validatePinata();
+    const ipfsStatus = getProviderStatus();
 
     const statusEmoji = pkCheck.valid ? '✅' : '❌';
-    const pinataEmoji = pinataCheck.valid ? '✅' : '⚠️';
+    const ipfsEmoji = ipfsStatus.any ? '✅' : '⚠️';
+
+    let ipfsProviders = [];
+    if (ipfsStatus.nftStorage) ipfsProviders.push('NFT.Storage');
+    if (ipfsStatus.pinata) ipfsProviders.push('Pinata');
+    if (ipfsStatus.infura) ipfsProviders.push('Infura');
 
     await sendMessage(chatId, `
 🐾 *Clank & Claw Token Deployer*
@@ -226,7 +224,7 @@ Welcome @${username || 'agent'}! Deploy tokens on Base with ease.
 
 *System Status:*
 ${statusEmoji} Wallet: ${pkCheck.valid ? 'Ready' : pkCheck.error}
-${pinataEmoji} IPFS: ${pinataCheck.valid ? 'Ready' : 'Configure for image upload'}
+${ipfsEmoji} IPFS: ${ipfsProviders.length > 0 ? ipfsProviders.join(', ') : 'Not configured'}
 
 *Quick Commands:*
 • \`/go PEPE "Pepe Token" 10%\` → Fast deploy
@@ -583,15 +581,16 @@ Send image + context link to continue.
 const processPhoto = async (chatId, photo, session) => {
     await sendTyping(chatId);
 
-    // Check Pinata config
-    const pinataCheck = validatePinata();
-    if (!pinataCheck.valid) {
+    // Check IPFS config
+    const ipfsStatus = getProviderStatus();
+    if (!ipfsStatus.any) {
         return await sendMessage(chatId, `
 ❌ *IPFS not configured*
 
-Add to .env:
-\`PINATA_API_KEY=...\`
-\`PINATA_SECRET_KEY=...\`
+Add one of these to .env:
+• \`NFT_STORAGE_TOKEN=...\` (FREE at nft.storage)
+• \`PINATA_API_KEY=...\` + \`PINATA_SECRET_KEY=...\`
+• \`INFURA_PROJECT_ID=...\`
 
 Or paste an existing IPFS CID.
         `.trim());
@@ -874,11 +873,16 @@ const main = async () => {
 
     // Status checks
     const pkCheck = validatePrivateKey();
-    const pinataCheck = validatePinata();
+    const ipfsStatus = getProviderStatus();
+
+    let ipfsProviders = [];
+    if (ipfsStatus.nftStorage) ipfsProviders.push('NFT.Storage');
+    if (ipfsStatus.pinata) ipfsProviders.push('Pinata');
+    if (ipfsStatus.infura) ipfsProviders.push('Infura');
 
     console.log(`✅ Bot: @${me.result.username}`);
     console.log(`${pkCheck.valid ? '✅' : '❌'} Wallet: ${pkCheck.valid ? 'Ready' : pkCheck.error}`);
-    console.log(`${pinataCheck.valid ? '✅' : '⚠️'} IPFS: ${pinataCheck.valid ? 'Ready' : 'Not configured'}`);
+    console.log(`${ipfsStatus.any ? '✅' : '⚠️'} IPFS: ${ipfsProviders.length > 0 ? ipfsProviders.join(', ') : 'Not configured'}`);
     console.log(`📍 Admins: ${ADMIN_CHAT_IDS.length > 0 ? ADMIN_CHAT_IDS.join(', ') : 'All allowed'}`);
     console.log('');
     console.log('🔄 Polling for updates...');

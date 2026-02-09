@@ -1,17 +1,14 @@
-# 🐾 Clank & Claw v2.5
+# 🐾 Clank & Claw v2.6
 
 **Agentic Token Deployment Machine**
 
-Deploy ERC-20 tokens on **Base** via Telegram Bot, AI Agent, or CLI with full spoofing support.
+Deploy ERC-20 tokens on **Base** via Telegram Bot, AI Agent, or CLI.
 
-## ✨ Key Features
+## ✨ New in v2.6
 
-- 🤖 **Telegram Bot** - Deploy from chat with natural language
-- 📷 **Auto IPFS** - Send image → instant Pinata upload  
-- 🔗 **Smart Parsing** - Paste link → auto-detect platform
-- 🎭 **Stealth Mode** - Spoof reward recipients
-- 💰 **High Tax** - 1% to 99% unrestricted fees
-- 🛡️ **Hardened** - Retry logic, timeouts, error recovery
+- 📁 **Separate Configs**: `.env` for system, `token.json` for tokens
+- 🆓 **Free IPFS**: NFT.Storage (no credit card needed)
+- 🔧 **Setup Wizard**: Interactive first-time setup
 
 ---
 
@@ -20,83 +17,157 @@ Deploy ERC-20 tokens on **Base** via Telegram Bot, AI Agent, or CLI with full sp
 ```bash
 git clone https://github.com/Timcuan/clank-and-claw.git
 cd clank-and-claw && npm install
-cp .env.example .env  # Edit with your keys
-npm run bot           # Start Telegram bot
+
+# Interactive setup (recommended)
+npm run setup
+
+# Or manual: copy and edit .env.example
+cp .env.example .env
 ```
+
+---
+
+## 📁 Config Files
+
+| File | Purpose | When to Edit |
+|------|---------|--------------|
+| `.env` | System config (keys, API) | Once, at setup |
+| `token.json` | Token details | Before each deploy |
+
+### token.json Example
+
+```json
+{
+  "name": "Pepe Token",
+  "symbol": "PEPE",
+  "image": "bafkrei...",
+  "description": "The next Pepe",
+  
+  "fees": {
+    "total": "10%"
+  },
+  
+  "context": {
+    "platform": "twitter",
+    "url": "https://x.com/user/status/123"
+  },
+  
+  "socials": {
+    "x": "https://x.com/pepe"
+  }
+}
+```
+
+---
+
+## 🆓 IPFS Providers (Free Options)
+
+| Provider | Setup | Credit Card? |
+|----------|-------|--------------|
+| **NFT.Storage** | nft.storage | ❌ No |
+| Pinata | pinata.cloud | ❌ No (free tier) |
+| Infura | infura.io | ❌ No (free tier) |
+
+The system auto-fallbacks between providers!
 
 ---
 
 ## 🤖 Telegram Bot
 
 ### Setup
-
-1. Create bot with [@BotFather](https://t.me/BotFather)
-2. Get [Pinata](https://pinata.cloud) API keys
-3. Add to `.env`:
-```env
-TELEGRAM_BOT_TOKEN=123456:ABC...
-PINATA_API_KEY=xxx
-PINATA_SECRET_KEY=xxx
-PRIVATE_KEY=0x...
+```bash
+npm run setup  # Follow prompts
+npm run bot    # Start bot
 ```
-4. Run: `npm run bot`
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
 | `/go SYMBOL "Name" 10%` | ⚡ Fast deploy |
-| `/deploy` | 📝 Step-by-step wizard |
-| `/status` | 💰 Check wallet |
+| `/deploy` | 📝 Step-by-step |
+| `/spoof 0x...` | 🎭 Stealth mode |
+| `/status` | 💰 Wallet info |
 | `/config` | ⚙️ Current session |
-| `/spoof 0x...` | 🎭 Set stealth address |
-| `/cancel` | ❌ Reset session |
 
 ### Usage Flow
 
 ```
-You: /go PEPE "Pepe Token" 10%
-Bot: ✅ Token Configured. Send image + link.
-
-You: [send image]
-Bot: ✅ Image uploaded! CID: bafkrei...
-
-You: https://x.com/user/status/123
-Bot: 🚀 READY TO DEPLOY! Type yes to deploy.
-
-You: yes
-Bot: 🎉 DEPLOYED! Address: 0x...
+/go PEPE "Pepe Token" 10%
+[send image]
+https://x.com/user/status/123
+yes
+🎉 Deployed!
 ```
-
-### Natural Language
-
-Just describe your token:
-```
-"Deploy DOGE (Moon Doge) with 5% fees"
-```
-Bot auto-detects name, symbol, and fees!
-
-### Fee Formats
-
-| Input | Result |
-|-------|--------|
-| `10%` | 5% + 5% |
-| `5% 5%` | 5% + 5% |
-| `500bps` | 2.5% + 2.5% |
-| `250 250` | 2.5% + 2.5% |
 
 ---
 
-## 🎭 Stealth/Spoofing Mode
+## 💻 CLI Deployment
 
-Redirect all rewards to a hidden wallet:
+```bash
+# Edit token details
+nano token.json
 
+# Deploy
+npm run deploy
+
+# Or with custom file
+node deploy.js mytoken.json
+
+# Legacy: use .env only
+node deploy.js --env
 ```
-/spoof 0xYourStealthAddress
-/go STEALTH "Hidden Token" 20%
+
+---
+
+## 🖥️ VPS Deployment
+
+```bash
+# Install
+curl -sL https://raw.githubusercontent.com/Timcuan/clank-and-claw/main/vps-setup.sh | bash
+
+# Setup
+cd ~/clank-and-claw
+npm run setup
+
+# Run bot (background)
+tmux new -s claw
+npm run bot
+# Ctrl+B, D to detach
 ```
 
-The stealth address receives all fees without appearing as token admin.
+### Quick VPS Commands
+```bash
+~/run-bot.sh          # Start Telegram bot
+~/deploy-token.sh     # Deploy from token.json
+```
+
+---
+
+## 🔄 Deployment Flow on VPS
+
+1. **First time**: Run `npm run setup`
+2. **Each deploy**: Edit `token.json`, then `npm run deploy`
+3. **With bot**: Just use `/go` command in Telegram!
+
+---
+
+## 🎭 Stealth/Spoofing
+
+In token.json:
+```json
+{
+  "advanced": {
+    "spoofTo": "0xStealthWallet"
+  }
+}
+```
+
+Or via Telegram:
+```
+/spoof 0xStealthWallet
+/go TOKEN "My Token" 10%
+```
 
 ---
 
@@ -104,83 +175,18 @@ The stealth address receives all fees without appearing as token admin.
 
 ```
 clank-and-claw/
-├── telegram-bot.js        # Main Telegram bot
-├── deploy.js              # CLI deployment
-├── openclaw-handler.js    # AI agent interface
-├── clanker-core.js        # SDK wrapper
+├── .env              # System config (keys)
+├── token.json        # Token config (per deploy)
+├── setup.js          # Interactive setup
+├── deploy.js         # CLI deployment
+├── telegram-bot.js   # Telegram bot
 ├── lib/
-│   ├── config.js          # Config loader
-│   ├── validator.js       # Validation + feedback
-│   ├── parser.js          # NL parsing
-│   └── ipfs.js            # Pinata uploader
-└── .env.example
+│   ├── config.js     # Config loader
+│   ├── ipfs.js       # Multi-provider uploader
+│   ├── parser.js     # NL parsing
+│   └── validator.js  # Validation
+└── vps-setup.sh      # VPS installer
 ```
-
----
-
-## 🤖 AI Agent (OpenClaw)
-
-### JSON Input
-```bash
-echo '{"name":"Token","symbol":"TKN","image":"bafk..."}' | node openclaw-handler.js
-```
-
-### Response
-```json
-{
-  "success": true,
-  "address": "0x...",
-  "txHash": "0x...",
-  "scanUrl": "https://basescan.org/..."
-}
-```
-
-Use `openclaw-tool.json` for function calling schema.
-
----
-
-## ⚙️ Configuration
-
-### Required
-| Variable | Description |
-|----------|-------------|
-| `PRIVATE_KEY` | Deployer wallet (0x...) |
-| `TELEGRAM_BOT_TOKEN` | From @BotFather |
-| `PINATA_API_KEY` | For image upload |
-| `PINATA_SECRET_KEY` | For image upload |
-
-### Optional
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TELEGRAM_ADMIN_IDS` | all | Comma-separated chat IDs |
-| `RPC_URL` | mainnet.base.org | Custom RPC |
-| `STRICT_MODE` | false | Enforce Blue Badge rules |
-
----
-
-## 🖥️ VPS Setup
-
-```bash
-curl -sL https://raw.githubusercontent.com/Timcuan/clank-and-claw/main/vps-setup.sh | bash
-```
-
-Run bot in background:
-```bash
-tmux new -s claw
-~/run-bot.sh
-# Ctrl+B, D to detach
-```
-
----
-
-## 🛡️ Error Handling
-
-The system handles:
-- ⚡ Network timeouts (auto-retry)
-- 🔄 Rate limits (exponential backoff)
-- 💾 Session timeouts (30 min auto-cleanup)
-- ❌ Invalid inputs (helpful feedback)
-- 💰 Low balance warnings
 
 ---
 

@@ -1,0 +1,27 @@
+{
+    "_comment": "🐾 Token Configuration - Edit this for each deployment",
+    "name": "My Token",
+    "symbol": "TOKEN",
+    "image": "bafkrei... or https://...",
+    "description": "Token description",
+    "fees": {
+        "total": "10%",
+        "_or_split": "5% 5%",
+        "_or_bps": 1000
+    },
+    "context": {
+        "platform": "twitter",
+        "url": "https://x.com/user/status/123456789"
+    },
+    "socials": {
+        "x": "https://x.com/myproject",
+        "website": "",
+        "telegram": ""
+    },
+    "advanced": {
+        "admin": "",
+        "spoofTo": "",
+        "devBuy": 0,
+        "vanity": true
+    }
+}

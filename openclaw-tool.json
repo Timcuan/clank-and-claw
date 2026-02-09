@@ -1,166 +1,156 @@
 {
     "name": "clanker_deploy_token",
-    "description": "Deploys an ERC-20 token on Base with automated liquidity. Supports strict mode and advanced configuration (fees, rewards, pool positions, sniper fees, socials).",
+    "description": "Deploy an ERC-20 token on Base blockchain with automated liquidity via Clanker SDK v4. Returns JSON with deployment result.",
     "parameters": {
         "type": "object",
         "properties": {
-            "TOKEN_NAME": {
+            "name": {
                 "type": "string",
-                "description": "The name of the token (e.g., 'ClawBot AI')"
+                "description": "Token name (e.g., 'ClawBot AI')"
             },
-            "TOKEN_SYMBOL": {
+            "symbol": {
                 "type": "string",
-                "description": "The ticker symbol (e.g., 'CLAW')"
+                "description": "Token ticker symbol (e.g., 'CLAW')"
             },
-            "TOKEN_IMAGE": {
+            "image": {
                 "type": "string",
-                "description": "Image URL or IPFS CID for the token logo"
+                "description": "Token logo - IPFS CID (bafkrei...) or HTTPS URL"
             },
-            "METADATA_DESCRIPTION": {
+            "description": {
                 "type": "string",
-                "description": "Project description for ClankerWorld verification"
+                "description": "Token/project description"
             },
-            "SOCIALS": {
+            "admin": {
+                "type": "string",
+                "description": "Wallet address that will own the token/LP"
+            },
+            "fees": {
                 "type": "object",
+                "description": "Fee configuration (100 bps = 1%)",
                 "properties": {
-                    "x": { "type": "string" },
-                    "telegram": { "type": "string" },
-                    "farcaster": { "type": "string" },
-                    "website": { "type": "string" }
+                    "type": {
+                        "type": "string",
+                        "enum": [
+                            "static",
+                            "dynamic"
+                        ],
+                        "default": "static"
+                    },
+                    "clankerFee": {
+                        "type": "integer",
+                        "description": "Token side fee in bps",
+                        "default": 100
+                    },
+                    "pairedFee": {
+                        "type": "integer",
+                        "description": "WETH side fee in bps",
+                        "default": 100
+                    }
                 }
             },
-            "CONTEXT": {
+            "context": {
                 "type": "object",
+                "description": "Social context for indexing (IMPORTANT: must be specific post URL)",
                 "properties": {
-                    "platform": { "type": "string" },
-                    "messageId": { "type": "string" }
+                    "platform": {
+                        "type": "string",
+                        "enum": [
+                            "twitter",
+                            "farcaster",
+                            "clanker"
+                        ],
+                        "default": "twitter"
+                    },
+                    "messageId": {
+                        "type": "string",
+                        "description": "Specific post URL (e.g., https://x.com/user/status/123)"
+                    }
                 }
             },
-            "CONTEXT_MESSAGE_ID": {
-                "type": "string",
-                "description": "Warpcast URL or Cast Hash for social indexing"
+            "socials": {
+                "type": "object",
+                "properties": {
+                    "x": {
+                        "type": "string"
+                    },
+                    "telegram": {
+                        "type": "string"
+                    },
+                    "farcaster": {
+                        "type": "string"
+                    },
+                    "website": {
+                        "type": "string"
+                    }
+                }
             },
-            "CONTEXT_PLATFORM": {
-                "type": "string",
-                "description": "Context platform (farcaster, twitter, instagram, clanker)"
+            "sniperFees": {
+                "type": "object",
+                "description": "Anti-bot protection (Unibps: 1,000,000 = 100%)",
+                "properties": {
+                    "startingFee": {
+                        "type": "integer",
+                        "default": 666777
+                    },
+                    "endingFee": {
+                        "type": "integer",
+                        "default": 41673
+                    },
+                    "secondsToDecay": {
+                        "type": "integer",
+                        "default": 15
+                    }
+                }
             },
-            "DEV_BUY_ETH_AMOUNT": {
+            "devBuy": {
                 "type": "number",
-                "description": "Amount of ETH to buy at launch (strict mode requires > 0)"
+                "description": "ETH amount to buy at launch (optional)"
             },
-            "STRICT_MODE": {
+            "vanity": {
                 "type": "boolean",
-                "default": true,
-                "description": "Enforce Clankerworld checklist compliance (max 5% fees, farcaster context, dev buy required)."
+                "description": "Request Clanker vanity address suffix",
+                "default": true
             },
-            "HIGH_TAX": {
+            "dryRun": {
                 "type": "boolean",
-                "description": "DEGEN MODE: allows fees > 5%."
+                "description": "Validate config without deploying",
+                "default": false
             },
-            "DRY_RUN": {
+            "strictMode": {
                 "type": "boolean",
-                "description": "If true, validate config without deployment."
+                "description": "Enforce Clankerworld Blue Badge requirements (5% max fee, farcaster only)",
+                "default": false
             },
-            "RPC_URL": {
+            "privateKey": {
                 "type": "string",
-                "description": "Optional RPC URL override"
-            },
-            "PRIVATE_KEY": {
-                "type": "string",
-                "description": "Deployer private key (not required for DRY_RUN)"
-            },
-            "VANITY": {
-                "type": "boolean",
-                "description": "Request Clanker vanity suffix"
-            },
-            "TOKEN_ADMIN": {
-                "type": "string",
-                "description": "Liquidity owner / token admin address"
-            },
-            "ADMIN_SPOOF": {
-                "type": "string",
-                "description": "Redirect reward recipient to a different address"
-            },
-            "REWARD_RECIPIENT": {
-                "type": "string",
-                "description": "Rewards recipient address"
-            },
-            "REWARD_CREATOR": {
-                "type": "string",
-                "description": "Creator rewards address (99.9%)"
-            },
-            "REWARD_INTERFACE": {
-                "type": "string",
-                "description": "Interface rewards address (0.1%)"
-            },
-            "REWARDS": {
-                "type": "object",
-                "properties": {
-                    "recipients": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "recipient": { "type": "string" },
-                                "bps": { "type": "integer" },
-                                "token": { "type": "string" }
-                            },
-                            "required": ["recipient", "bps", "token"]
-                        }
-                    }
-                }
-            },
-            "FEES": {
-                "type": "object",
-                "properties": {
-                    "type": { "type": "string", "enum": ["static", "dynamic"] },
-                    "clankerFee": { "type": "integer" },
-                    "pairedFee": { "type": "integer" },
-                    "baseFee": { "type": "integer" },
-                    "maxFee": { "type": "integer" },
-                    "referenceTickFilterPeriod": { "type": "integer" },
-                    "resetPeriod": { "type": "integer" },
-                    "resetTickFilter": { "type": "integer" },
-                    "feeControlNumerator": { "type": "integer" },
-                    "decayFilterBps": { "type": "integer" }
-                }
-            },
-            "SNIPER_FEES": {
-                "type": "object",
-                "properties": {
-                    "startingFee": { "type": "integer" },
-                    "endingFee": { "type": "integer" },
-                    "secondsToDecay": { "type": "integer" }
-                }
-            },
-            "POOL": {
-                "type": "object",
-                "properties": {
-                    "type": { "type": "string" },
-                    "startingTick": { "type": "integer" },
-                    "pairedToken": { "type": "string" },
-                    "positions": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "tickLower": { "type": "integer" },
-                                "tickUpper": { "type": "integer" },
-                                "positionBps": { "type": "integer" }
-                            },
-                            "required": ["tickLower", "tickUpper", "positionBps"]
-                        }
-                    }
-                }
+                "description": "Deployer private key (optional - uses .env if not provided)"
             }
         },
         "required": [
-            "TOKEN_NAME",
-            "TOKEN_SYMBOL",
-            "TOKEN_IMAGE",
-            "METADATA_DESCRIPTION",
-            "CONTEXT_MESSAGE_ID",
-            "DEV_BUY_ETH_AMOUNT"
+            "name",
+            "symbol",
+            "image"
         ]
+    },
+    "returns": {
+        "type": "object",
+        "properties": {
+            "success": {
+                "type": "boolean"
+            },
+            "address": {
+                "type": "string",
+                "description": "Deployed token address"
+            },
+            "txHash": {
+                "type": "string"
+            },
+            "scanUrl": {
+                "type": "string"
+            },
+            "error": {
+                "type": "string"
+            }
+        }
     }
 }

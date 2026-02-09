@@ -1,151 +1,160 @@
 # 🐾 Clank & Claw v2.0
 
-A professional-grade modular framework for deploying tokens on the **Base** blockchain using the **Clanker SDK v4**.
+Deploy ERC-20 tokens on **Base** blockchain with automated liquidity using **Clanker SDK v4**.
 
-Optimized for **AI Agent** integration (OpenClaw) and unrestricted tax deployment (1% - 99%).
+Optimized for **AI Agent** integration and **VPS deployment**.
 
-## 🚀 Features
+## 🚀 Quick Start
 
-- **⚡ Unrestricted Tax**: Deploy with any fee level (1% to 99%) without restrictions.
-- **🛡️ Strict Mode**: Optional enforcement of Clankerworld "Checklist" for Blue Badge verification.
-- **🤖 AI Ready**: Modular architecture and OpenClaw tool schemas for AI agent integration.
-- **🔫 Sniper Protection**: Built-in decaying fees to combat launch-day bots.
-- **🖥️ VPS Ready**: One-command setup for Debian/Ubuntu servers.
-
----
+```bash
+git clone https://github.com/Timcuan/clank-and-claw.git
+cd clank-and-claw && npm install
+cp .env.example .env
+# Edit .env with your PRIVATE_KEY
+node deploy.js
+```
 
 ## 📁 Project Structure
 
 ```
 clank-and-claw/
-├── deploy.js              # Main CLI entry point
-├── clanker-core.js        # Core deployment logic (SDK wrapper)
-├── openclaw-handler.js    # AI agent JSON input handler
-├── openclaw-tool.json     # OpenClaw tool schema
+├── deploy.js              # CLI deployment
+├── clanker-core.js        # SDK wrapper
+├── openclaw-handler.js    # AI agent interface (JSON in/out)
+├── openclaw-tool.json     # AI tool schema
 ├── lib/
 │   ├── config.js          # Configuration loader
 │   ├── validator.js       # Validation logic
-│   └── utils.js           # Shared utility functions
-├── .env.example           # Configuration template
-├── vps-setup.sh           # VPS automation script
-└── package.json
+│   └── utils.js           # Utilities
+├── vps-setup.sh           # One-command VPS setup
+└── .env.example           # Configuration template
 ```
 
 ---
 
-## 🛠️ Installation
+## 🤖 AI Agent Integration
 
-1. **Clone the Repo**:
-   ```bash
-   git clone https://github.com/Timcuan/clank-and-claw.git
-   cd clank-and-claw
-   npm install
-   ```
+### Tool Schema
+Use `openclaw-tool.json` for your AI agent's function calling definition.
 
-2. **Configure Environment**:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your private key, token details, etc.
-   ```
-
----
-
-## 📖 Usage
-
-### ⚙️ Basic Deployment
-```bash
-node deploy.js
-# or
-npm run deploy
-```
-
-### 🔬 Dry Run (Validation Only)
-```bash
-DRY_RUN=true node deploy.js
-# or
-npm test
-```
-
-### 🏴‍☠️ High Tax Deployment
-Fees are **unrestricted** by default. Simply set your desired fees in `.env`:
+### JSON Input/Output
+The handler accepts JSON and returns JSON - perfect for AI agents:
 
 ```bash
-# .env
-FEE_CLANKER_BPS="500"   # 5%
-FEE_PAIRED_BPS="500"    # 5%
-# Total: 10%
+echo '{"name":"MyToken","symbol":"MTK","image":"bafk..."}' | node openclaw-handler.js
 ```
 
-The script will log: `🏴‍☠️ High Tax Detected (10%). Proceeding as requested.`
+**Response:**
+```json
+{
+  "success": true,
+  "address": "0x...",
+  "txHash": "0x...",
+  "scanUrl": "https://basescan.org/address/0x...",
+  "logs": [...]
+}
+```
 
----
+### Minimal Example
+```json
+{
+  "name": "MyToken",
+  "symbol": "MTK",
+  "image": "bafkreiesnzcilwuuisbrzznvwqozqlgodz7t7a4amhvpurv65nnjfuodbq"
+}
+```
 
-## 🤖 AI Agent Integration (OpenClaw)
+### Full Example
+```json
+{
+  "name": "Premium Token",
+  "symbol": "PREM",
+  "image": "bafkrei...",
+  "description": "A premium token with custom fees",
+  "admin": "0xYourWallet",
+  "fees": {
+    "clankerFee": 250,
+    "pairedFee": 250
+  },
+  "context": {
+    "platform": "twitter",
+    "messageId": "https://x.com/user/status/123456789"
+  },
+  "socials": {
+    "x": "https://x.com/myproject"
+  },
+  "sniperFees": {
+    "startingFee": 666777,
+    "endingFee": 41673,
+    "secondsToDecay": 15
+  },
+  "vanity": true,
+  "dryRun": false
+}
+```
 
-### Schema
-Use `openclaw-tool.json` as the tool definition for your AI agent.
-
-### Handler
-Send JSON via stdin, `--file`, or `OPENCLAW_INPUT` environment variable:
-
+### Input Methods
 ```bash
-echo '{"name": "MyToken", "symbol": "MTK", "image": "ipfs://...", "STRICT_MODE": false}' | node openclaw-handler.js
-```
+# Stdin (recommended for AI)
+echo '{"name":"Test",...}' | node openclaw-handler.js
 
-### Direct Import
-```javascript
-import { deployToken } from './clanker-core.js';
+# File
+node openclaw-handler.js --file config.json
 
-const result = await deployToken({
-  name: "MyToken",
-  symbol: "MTK",
-  image: "https://...",
-  // ... full config
-});
+# Environment variable
+OPENCLAW_INPUT='{"name":"Test",...}' node openclaw-handler.js
 ```
 
 ---
 
-## ⚙️ Configuration Reference
+## 🖥️ VPS Deployment
 
-### Required
-| Variable | Description |
-|----------|-------------|
-| `PRIVATE_KEY` | Wallet private key (with 0x prefix) |
-| `TOKEN_NAME` | Token display name |
-| `TOKEN_SYMBOL` | Token ticker symbol |
-| `TOKEN_IMAGE` | IPFS CID or HTTPS URL |
-
-### Fees (Static)
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `FEE_TYPE` | `static` | `static` or `dynamic` |
-| `FEE_CLANKER_BPS` | `100` | Token side fee (basis points) |
-| `FEE_PAIRED_BPS` | `100` | WETH side fee (basis points) |
-
-### Sniper Protection
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SNIPER_STARTING_FEE` | `666777` | Initial fee (Unibps, 1M=100%) |
-| `SNIPER_ENDING_FEE` | `41673` | Final fee after decay |
-| `SNIPER_SECONDS_TO_DECAY` | `15` | Decay duration |
-
-### Context (For Indexing)
-| Variable | Description |
-|----------|-------------|
-| `CONTEXT_PLATFORM` | `farcaster`, `twitter`, or `clanker` |
-| `CONTEXT_MESSAGE_ID` | **Specific post URL** (not profile!) |
-
-> ⚠️ **Important**: `CONTEXT_MESSAGE_ID` must be a specific tweet/cast URL for proper indexing.
-
----
-
-## 🖥️ VPS Setup
-
+### One-Command Setup
 ```bash
 curl -sL https://raw.githubusercontent.com/Timcuan/clank-and-claw/main/vps-setup.sh | bash
-cd clank-and-claw && node deploy.js
 ```
+
+### After Setup
+```bash
+nano ~/clank-and-claw/.env   # Add PRIVATE_KEY
+~/deploy-token.sh            # Deploy from .env
+~/openclaw.sh --file x.json  # Deploy from JSON
+```
+
+### What the Script Does
+- Installs Node.js LTS, git, tmux, jq, ufw
+- Clones/updates the repository
+- Creates `.env` from template
+- Enables firewall (OpenSSH allowed)
+- Hardens SSH (key-only if keys exist)
+- Creates helper scripts
+
+---
+
+## ⚙️ Configuration
+
+### Required Fields
+| Field | Description |
+|-------|-------------|
+| `name` | Token name |
+| `symbol` | Token ticker |
+| `image` | IPFS CID or HTTPS URL |
+
+### Optional Fields
+| Field | Default | Description |
+|-------|---------|-------------|
+| `admin` | from .env | Wallet that owns the token |
+| `fees.clankerFee` | 100 | Token side fee (bps) |
+| `fees.pairedFee` | 100 | WETH side fee (bps) |
+| `vanity` | true | Request vanity address |
+| `dryRun` | false | Validate without deploying |
+| `strictMode` | false | Enforce Blue Badge requirements |
+
+### Fee Reference
+- `100 bps = 1%`
+- `500 bps = 5%`
+- `1000 bps = 10%`
+- No restrictions - set any value 0-9900
 
 ---
 

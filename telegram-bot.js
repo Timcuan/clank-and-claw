@@ -870,4 +870,22 @@ const main = async () => {
     poll();
 };
 
-main().catch(console.error);
+// ═══════════════════════════════════════════
+// GLOBAL ERROR SAFETY
+// ═══════════════════════════════════════════
+
+process.on('uncaughtException', (err) => {
+    console.error('🔥 CRITICAL: Uncaught Exception:', err);
+    // In production managed by PM2, a restart might be better, 
+    // but for standalone stability, we log and keep alive if possible.
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('⚠️ Unhandled Rejection:', reason);
+});
+
+// Start Main
+main().catch(err => {
+    console.error('❌ Fatal Startup Error:', err);
+    process.exit(1);
+});

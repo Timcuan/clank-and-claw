@@ -110,5 +110,27 @@ clank-and-claw/
 
 ---
 
-**Ready to deploy?**
-Initialize the system and let the Agent handle the rest.
+---
+
+## 🏗️ Production Setup (Server)
+
+To ensure the bot runs 24/7 with auto-restart capabilities, use **PM2**.
+
+1. **Install PM2 globally:**
+   ```bash
+   npm install pm2 -g
+   ```
+
+2. **Start the Bot:**
+   ```bash
+   pm2 start ecosystem.config.cjs
+   ```
+   *This starts the bot in background mode with auto-restart on crash and memory leak protection.*
+
+3. **Monitor:**
+   ```bash
+   pm2 list      # Check status
+   pm2 logs      # View live logs
+   pm2 monit     # Dashboard
+   ```
+

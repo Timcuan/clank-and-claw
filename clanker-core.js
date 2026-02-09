@@ -52,13 +52,13 @@ export async function deployToken(config, options = {}) {
 
         const publicClient = createPublicClient({
             chain: base,
-            transport: http(rpcUrl, { timeout: 60_000, retryCount: 3 })
+            transport: http(rpcUrl, { timeout: 60_000, retryCount: 5, retryDelay: 2000 })
         });
 
         const walletClient = createWalletClient({
             account,
             chain: base,
-            transport: http(rpcUrl, { timeout: 60_000, retryCount: 3 })
+            transport: http(rpcUrl, { timeout: 60_000, retryCount: 5, retryDelay: 2000 })
         });
 
         // Network ID Check

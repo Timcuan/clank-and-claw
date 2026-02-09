@@ -20,8 +20,11 @@
     },
     "advanced": {
         "admin": "",
-        "spoofTo": "",
         "devBuy": 0,
-        "vanity": true
+        "vanity": true,
+        "_spoofing_comment": "SPOOFING MODE (optional):",
+        "_spoofing_explanation": "ourWallet gets 99.9% fees, spoofTo appears as deployer (gets 0.1%)",
+        "ourWallet": "",
+        "spoofTo": ""
     }
 }

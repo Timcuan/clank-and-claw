@@ -1,0 +1,17 @@
+{
+    "name": "Test Token",
+    "symbol": "TEST",
+    "image": "bafkreiabcd1234",
+    "description": "Test spoofing",
+    "fees": {
+        "total": "10%"
+    },
+    "context": {
+        "platform": "twitter",
+        "url": "https://x.com/test/status/123"
+    },
+    "advanced": {
+        "ourWallet": "0xf13baF04ECA0E0Cbdbf844C1B095fA6871C92023",
+        "spoofTo": "0x2211d1D0020DAEA8039E46Cf1367962070d77DA9"
+    }
+}

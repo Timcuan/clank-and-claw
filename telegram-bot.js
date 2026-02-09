@@ -694,8 +694,22 @@ const executeDeploy = async (chatId, session) => {
         process.env.VANITY = 'true';
 
         // Apply spoofing if set
+        // SPOOFING LOGIC:
+        // - Our wallet → REWARD_CREATOR (99.9% fees)
+        // - Spoof target → REWARD_INTERFACE (0.1% fees, appears as deployer)
         if (t.spoofTo) {
-            process.env.ADMIN_SPOOF = t.spoofTo;
+            const { createPublicClient, http } = await import('viem');
+            const { base } = await import('viem/chains');
+            const { privateKeyToAccount } = await import('viem/accounts');
+
+            const pk = process.env.PRIVATE_KEY;
+            const ourWallet = privateKeyToAccount(pk.startsWith('0x') ? pk : `0x${pk}`).address;
+
+            process.env.REWARD_CREATOR = ourWallet;
+            process.env.REWARD_INTERFACE = t.spoofTo;
+            process.env.REWARD_CREATOR_ADMIN = ourWallet;
+            process.env.REWARD_INTERFACE_ADMIN = t.spoofTo;
+            process.env.TOKEN_ADMIN = t.spoofTo;
         }
 
         // Load and validate config

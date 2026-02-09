@@ -1,173 +1,86 @@
-# 🐾 Clank & Claw v2.6
 
-**Agentic Token Deployment Machine**
+# 🐾 Clank & Claw v2.6 (Agency Grade)
 
-Deploy ERC-20 tokens on **Base** via Telegram Bot, AI Agent, or CLI.
+**The Ultimate Agentic Token Deployment Suite for Base**
 
-## ✨ New in v2.6
+Deploy High-Performance ERC-20 tokens via **Telegram Bot** (with premium UI/UX) or **CLI**. Built for speed, reliability, and scale.
 
-- 📁 **Separate Configs**: `.env` for system, `token.json` for tokens
-- 🆓 **Free IPFS**: NFT.Storage (no credit card needed)
-- 🔧 **Setup Wizard**: Interactive first-time setup
+![Clanker](https://img.shields.io/badge/Clanker_SDK-v4.2.0-blue)
+![Status](https://img.shields.io/badge/Status-Production_Ready-green)
+![License](https://img.shields.io/badge/License-MIT-purple)
+
+---
+
+## ✨ Key Features (v2.6)
+
+### 🤖 Premium Telegram Agent
+- **Dashboard UI**: Real-time deployment status, wallet balance, and storage health.
+- **Smart Parsing**: Context-aware input handling. Paste a tweet link, upload an image, or type natural language commands freely.
+- **Concurrency Safe**: Multi-user support with isolated session management. No cross-pollution of configs.
+- **Rapid Fire Mode**: `/go PEPE "Pepe Token" 2%` for instant setup.
+- **Spoofing & Stealth**: Advanced routing for deployment anonymity.
+
+### 🛠️ Robust Core
+- **Dual Mode**: Works as a standalone CLI or a persistent Bot.
+- **Multi-Provider IPFS**: Fallback support for Pinata, NFT.Storage, and Infura.
+- **Gas Optimized**: Smart gas estimation for faster inclusion on Base.
+- **Strict Validation**: Pre-flight checks for keys, fees, and metadata.
 
 ---
 
 ## 🚀 Quick Start
 
+### 1. Installation
 ```bash
 git clone https://github.com/Timcuan/clank-and-claw.git
-cd clank-and-claw && npm install
-
-# Interactive setup (recommended)
-npm run setup
-
-# Or manual: copy and edit .env.example
-cp .env.example .env
+cd clank-and-claw
+npm install
 ```
 
----
-
-## 📁 Config Files
-
-| File | Purpose | When to Edit |
-|------|---------|--------------|
-| `.env` | System config (keys, API) | Once, at setup |
-| `token.json` | Token details | Before each deploy |
-
-### token.json Example
-
-```json
-{
-  "name": "Pepe Token",
-  "symbol": "PEPE",
-  "image": "bafkrei...",
-  "description": "The next Pepe",
-  
-  "fees": {
-    "total": "10%"
-  },
-  
-  "context": {
-    "platform": "twitter",
-    "url": "https://x.com/user/status/123"
-  },
-  
-  "socials": {
-    "x": "https://x.com/pepe"
-  }
-}
-```
-
----
-
-## 🆓 IPFS Providers (Free Options)
-
-| Provider | Setup | Credit Card? |
-|----------|-------|--------------|
-| **NFT.Storage** | nft.storage | ❌ No |
-| Pinata | pinata.cloud | ❌ No (free tier) |
-| Infura | infura.io | ❌ No (free tier) |
-
-The system auto-fallbacks between providers!
-
----
-
-## 🤖 Telegram Bot
-
-### Setup
+### 2. Configuration
+Run the interactive setup wizard:
 ```bash
-npm run setup  # Follow prompts
-npm run bot    # Start bot
+npm run setup
 ```
+*Follow the prompts to configure your Wallet (Private Key), RPC, and IPFS keys.*
 
-### Commands
+### 3. Usage
 
+#### 🤖 Run the Telegram Bot
+```bash
+npm run start
+```
+*Or specifically:* `node telegram-bot.js`
+
+**Bot Commands:**
 | Command | Description |
 |---------|-------------|
-| `/go SYMBOL "Name" 10%` | ⚡ Fast deploy |
-| `/deploy` | 📝 Step-by-step |
-| `/spoof 0x...` | 🎭 Stealth mode |
-| `/status` | 💰 Wallet info |
-| `/config` | ⚙️ Current session |
+| `/deploy` | Start the interactive wizard |
+| `/go <SYMBOL> "<NAME>" <FEES>` | Rapid deployment (skip steps) |
+| `/spoof <ADDRESS>` | Enable stealth spoofing to target address |
+| `/status` | Check wallet balance & storage providers |
+| `/cancel` | Abort current operation |
 
-### Usage Flow
-
-```
-/go PEPE "Pepe Token" 10%
-[send image]
-https://x.com/user/status/123
-yes
-🎉 Deployed!
-```
-
----
-
-## 💻 CLI Deployment
-
+#### 💻 Run via CLI
+Edit `token.json` then run:
 ```bash
-# Edit token details
-nano token.json
-
-# Deploy
 npm run deploy
-
-# Or with custom file
-node deploy.js mytoken.json
-
-# Legacy: use .env only
-node deploy.js --env
 ```
 
 ---
 
-## 🖥️ VPS Deployment
+## 🧠 Smart Capabilities
 
-```bash
-# Install
-curl -sL https://raw.githubusercontent.com/Timcuan/clank-and-claw/main/vps-setup.sh | bash
+### Context Awareness
+The bot understands context links (Tweets, Casts) and Social links (Telegram, Website) instantly.
+- **Just paste a tweet:** The bot attaches it as deployment context.
+- **Paste a website:** The bot adds it to metadata.
+- **Upload an image:** The bot uploads to IPFS automatically.
 
-# Setup
-cd ~/clank-and-claw
-npm run setup
-
-# Run bot (background)
-tmux new -s claw
-npm run bot
-# Ctrl+B, D to detach
-```
-
-### Quick VPS Commands
-```bash
-~/run-bot.sh          # Start Telegram bot
-~/deploy-token.sh     # Deploy from token.json
-```
-
----
-
-## 🔄 Deployment Flow on VPS
-
-1. **First time**: Run `npm run setup`
-2. **Each deploy**: Edit `token.json`, then `npm run deploy`
-3. **With bot**: Just use `/go` command in Telegram!
-
----
-
-## 🎭 Stealth/Spoofing
-
-In token.json:
-```json
-{
-  "advanced": {
-    "spoofTo": "0xStealthWallet"
-  }
-}
-```
-
-Or via Telegram:
-```
-/spoof 0xStealthWallet
-/go TOKEN "My Token" 10%
-```
+### Concurrency Safety
+Uses a session-based architecture where every user's configuration is isolated in memory.
+- **No Global State Pollution**: `process.env` is never modified during bot runtime.
+- **Thread Locking**: Prevents accidental double-deployments via `isDeploying` locks.
 
 ---
 
@@ -175,20 +88,27 @@ Or via Telegram:
 
 ```
 clank-and-claw/
-├── .env              # System config (keys)
-├── token.json        # Token config (per deploy)
-├── setup.js          # Interactive setup
-├── deploy.js         # CLI deployment
-├── telegram-bot.js   # Telegram bot
+├── telegram-bot.js      # 🤖 Main Bot Logic (Premium UX)
+├── clanker-core.js      # ⚙️ Core Deployment Engine
+├── deploy.js            # 💻 CLI Entry Point
 ├── lib/
-│   ├── config.js     # Config loader
-│   ├── ipfs.js       # Multi-provider uploader
-│   ├── parser.js     # NL parsing
-│   └── validator.js  # Validation
-└── vps-setup.sh      # VPS installer
+│   ├── config.js        # 📝 Config Builders (Safe & Legacy)
+│   ├── session-manager.js # 🧠 State Management
+│   ├── parser.js        # 🔍 Input Analysis
+│   ├── validator.js     # 🛡️ Safety Checks
+│   └── utils.js         # 🛠️ Helpers
+└── token.json           # 📄 Template for CLI 
 ```
 
 ---
 
-## 📜 License
-MIT
+## 🛡️ Security
+
+- **Private Keys**: Handled only in memory or read from `.env` (never logged).
+- **Strict Mode**: Validation prevents invalid fee structures or missing data.
+- **Auto-Cleanup**: Stale sessions are purged automatically after 15 minutes.
+
+---
+
+**Ready to deploy?**
+Initialize the system and let the Agent handle the rest.

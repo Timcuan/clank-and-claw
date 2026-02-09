@@ -23,6 +23,7 @@ import { validateConfig } from './lib/validator.js';
 import { deployToken } from './clanker-core.js';
 import { handleFallback } from './lib/fallback.js';
 import { sessionManager, DEFAULT_SESSION_FEES } from './lib/session-manager.js';
+import { createConfigFromSession } from './lib/config.js';
 
 // ═══════════════════════════════════════════
 // CONFIGURATION
@@ -644,66 +645,39 @@ ${t.spoofTo ? `• *Spoofing:* ACTIVE 🎭\n  Target: \`${t.spoofTo}\`` : '• *
 // ═══════════════════════════════════════════
 
 const executeDeploy = async (chatId, session) => {
+    if (session.isDeploying) return;
+    session.isDeploying = true;
+
     await sendTyping(chatId);
 
     // Final validation
     const pkCheck = validatePrivateKey();
     if (!pkCheck.valid) {
+        session.isDeploying = false;
         return await sendMessage(chatId, `❌ ${pkCheck.error}\n\nCannot deploy without wallet.`);
     }
 
     const t = session.token;
     const status = getReadyStatus(t);
     if (!status.ready) {
+        session.isDeploying = false;
         return await sendMessage(chatId, `❌ Missing: ${status.missing.join(', ')}`);
     }
 
     const statusMsg = await sendMessage(chatId, '⏳ *Deploying token...*\nThis may take 30-60 seconds.');
 
     try {
-        // Set environment for deployment
-        process.env.TOKEN_NAME = t.name;
-        process.env.TOKEN_SYMBOL = t.symbol;
-        process.env.TOKEN_IMAGE = t.image;
-        process.env.METADATA_DESCRIPTION = t.description || `${t.name} - Deployed via Clank & Claw`;
-        process.env.CONTEXT_PLATFORM = t.context?.platform || 'twitter';
-        process.env.CONTEXT_MESSAGE_ID = t.context?.messageId || '';
-        process.env.FEE_TYPE = 'static';
-        process.env.FEE_CLANKER_BPS = String(t.fees.clankerFee);
-        process.env.FEE_PAIRED_BPS = String(t.fees.pairedFee);
-        process.env.STRICT_MODE = 'false';
-        process.env.VANITY = 'true';
+        // Get Deployer Address for Config
+        const { privateKeyToAccount } = await import('viem/accounts');
+        const pk = process.env.PRIVATE_KEY;
+        const cleanKey = pk.startsWith('0x') ? pk : `0x${pk}`;
+        const account = privateKeyToAccount(cleanKey);
 
-        // Apply spoofing if set
-        // SPOOFING LOGIC:
-        // - Our wallet → REWARD_CREATOR (99.9% fees)
-        // - Spoof target → REWARD_INTERFACE (0.1% fees, appears as deployer)
-        if (t.spoofTo) {
-            const { createPublicClient, http } = await import('viem');
-            const { base } = await import('viem/chains');
-            const { privateKeyToAccount } = await import('viem/accounts');
+        // Build Config WITHOUT process.env side-effects
+        // This ensures thread safety for concurrent deployments
+        const config = createConfigFromSession(t, account.address);
 
-            const pk = process.env.PRIVATE_KEY;
-            const ourWallet = privateKeyToAccount(pk.startsWith('0x') ? pk : `0x${pk}`).address;
-
-            process.env.REWARD_CREATOR = ourWallet;
-            process.env.REWARD_INTERFACE = t.spoofTo;
-            process.env.REWARD_CREATOR_ADMIN = ourWallet;
-            process.env.REWARD_INTERFACE_ADMIN = t.spoofTo;
-            process.env.TOKEN_ADMIN = t.spoofTo;
-        }
-
-        // Apply socials
-        if (t.socials) {
-            Object.entries(t.socials).forEach(([platform, url]) => {
-                const key = `SOCIAL_${platform.toUpperCase()}`;
-                process.env[key] = url;
-            });
-        }
-
-        // Load and validate config
-        let config = loadConfig();
-        config = validateConfig(config);
+        console.log(`🚀 Bot Deploy Request: ${t.name} (${t.symbol}) from ChatID: ${chatId}`);
 
         // Deploy
         const result = await deployToken(config);
@@ -711,7 +685,7 @@ const executeDeploy = async (chatId, session) => {
         if (result.success) {
             const successMsg = `
 🎉 *DEPLOYED SUCCESSFULLY!*
-━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━
 
 📛 *${t.name}* (${t.symbol})
 📍 Address: \`${result.address}\`
@@ -720,7 +694,7 @@ const executeDeploy = async (chatId, session) => {
 💰 TX: \`${result.txHash?.substring(0, 20)}...\`
 
 Your token is now live on Base!
-${t.spoofTo ? '\n🎭 Rewards routed to stealth address.' : ''}
+${t.spoofTo ? '\n\n🎭 Rewards routed to stealth address.' : ''}
             `.trim();
 
             await editMessage(chatId, statusMsg?.result?.message_id, successMsg);
@@ -732,10 +706,12 @@ ${t.spoofTo ? '\n🎭 Rewards routed to stealth address.' : ''}
         }
 
     } catch (error) {
+        console.error('ExecuteDeploy Error:', error);
         await editMessage(chatId, statusMsg?.result?.message_id, `❌ *Error:* ${error.message}`);
+    } finally {
+        // Always reset session after attempt
+        resetSession(chatId);
     }
-
-    resetSession(chatId);
 };
 
 // ═══════════════════════════════════════════

@@ -21,6 +21,7 @@ import { parseSmartSocialInput } from './lib/social-parser.js';
 import { loadConfig } from './lib/config.js';
 import { validateConfig } from './lib/validator.js';
 import { deployToken } from './clanker-core.js';
+import { handleFallback } from './lib/fallback.js';
 
 // ═══════════════════════════════════════════
 // CONFIGURATION
@@ -578,13 +579,11 @@ Send image + context link to continue.
                 return;
             }
 
-            // Unknown input
-            return await sendMessage(chatId, `
-💡 Try:
-• \`/go SYMBOL "Name" 10%\` - Quick deploy
-• \`/deploy\` - Step-by-step wizard
-• \`/help\` - Full guide
-            `.trim());
+            // Unknown input -> Smart Fallback
+            return await handleFallback(chatId, text, session, {
+                sendMessage,
+                resetSession
+            });
 
         default:
             return await checkAndPrompt(chatId, session);

@@ -15,6 +15,32 @@
 }
 ```
 
+## 🤖 Bot Interaction & Commands
+
+The Telegram bot is AI-powered and understands natural language.
+
+### Smart Fallback
+If you get stuck or the bot doesn't understand, it will:
+- **Suggest valid inputs** based on your current step
+- **Detect typos** (e.g. "PEME" instead of "PEPE")
+- **Show partial progress** (what's missing)
+
+### Commands
+- `/start` - Check system status (IPFS, Wallet)
+- `/deploy` - Start the deployment wizard
+- `/go SYMBOL "Name" 10%` - Quick deploy in one line
+- `/spoof 0x...` - Enable spoofing for the active session
+- `/cancel` - Reset critical session data
+- `/reset` - Completely wipe session and start over
+
+### Smart Input
+ Paste *any* text containing links and the bot will sort them:
+ > "Here is my token launch tweet https://x.com/status/123 and website https://mysite.com"
+ 
+ Result:
+ - ✅ Context linked to Tweet
+ - ✅ Website added to socials
+
 ## All Fee Formats
 
 | Format | Example | Result |

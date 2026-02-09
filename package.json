@@ -1,6 +1,6 @@
 {
   "name": "clank-and-claw",
-  "version": "2.6.0",
+  "version": "2.6.4",
   "description": "Clanker Token Deployment - Telegram Bot & AI Agent",
   "main": "deploy.js",
   "scripts": {

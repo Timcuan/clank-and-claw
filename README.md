@@ -1,5 +1,5 @@
 
-# 🐾 Clank & Claw v2.6 (Agency Grade)
+# 🐾 Clank & Claw v2.6.4 (Agency Grade)
 
 **The Ultimate Agentic Token Deployment Suite for Base**
 
@@ -11,7 +11,7 @@ Deploy High-Performance ERC-20 tokens via **Telegram Bot** (with premium UI/UX) 
 
 ---
 
-## ✨ Key Features (v2.6)
+## ✨ Key Features (v2.6.4)
 
 ### 🤖 Premium Telegram Agent
 - **Dashboard UI**: Real-time deployment status, wallet balance, and storage health.

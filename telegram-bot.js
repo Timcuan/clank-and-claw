@@ -182,7 +182,7 @@ const handleStart = async (chatId, username) => {
     const storageStatus = providers.any ? '✅ Active' : '⚠️ Limited';
 
     await sendMessage(chatId, `
-🤖 *System Online: Clank & Claw v2.6*
+🤖 *System Online: Clank & Claw v2.6.4*
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 👤 *Operator:* @${username || 'Agent'}
@@ -835,7 +835,7 @@ const poll = async () => {
 
 const main = async () => {
     console.log('');
-    console.log('🐾 Clank & Claw Telegram Bot v2.5');
+    console.log('🐾 Clank & Claw Telegram Bot v2.6.4');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     if (!BOT_TOKEN) {

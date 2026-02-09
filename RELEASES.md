@@ -1,3 +1,29 @@
+# 🚀 Release Notes - Clank & Claw v2.6.5 (Network Hardening)
+
+### 🌐 VPS & Network Reliability
+- **Multi-RPC Failover**: Added `RPC_FALLBACK_URLS` support with active endpoint health probing before deployment.
+- **Receipt Recovery Across RPCs**: If primary RPC times out after tx submission, the system now attempts receipt recovery via fallback RPC providers.
+- **Telegram Gateway Failover**: Added `TELEGRAM_API_BASES` rotation support to survive temporary API gateway/DNS routing issues.
+- **Telegram File Endpoint Override**: Added `TELEGRAM_FILE_BASE` for custom file download base when running behind alternative gateways.
+- **IPFS Gateway Redundancy**: Added `IPFS_GATEWAYS` support and multi-gateway output URLs for stronger metadata reachability.
+
+### 🛡️ Runtime Hardening
+- **Stricter Input Validation**: Hardened address/symbol/image/reward validation in `validator.js`.
+- **Spoof Command Validation**: `/spoof` now validates strict EVM address format.
+- **Message Safety Guards**: Added Telegram message truncation and non-throwing fallback behavior.
+- **IPFS Download Safeguards**: Added content-type filtering, size prechecks, streaming size limits, and filename sanitization.
+
+### 🧰 Operations & Tooling
+- **VPS Diagnostics Script**: `vps-setup.sh` now creates `~/claw-netcheck.sh` for DNS, RPC, Telegram, and gateway health checks.
+- **Safer VPS Git Update Path**: Removed destructive update fallback in setup script, replaced with safe fetch/rebase flow.
+- **PM2 Resilience Tuning**: Increased restart resilience for transient network outages.
+- **Hardening Test Suite**: Added `npm run test:hardening` and coverage for validation/IPFS defensive behaviors.
+
+---
+*Date: February 9, 2026*
+
+---
+
 # 🚀 Release Notes - Clank & Claw v2.6.4
 
 ## 🌟 Key Highlights
@@ -51,4 +77,3 @@ This initial release transforms the basic Clanker SDK into a robust, AI-ready de
 
 ---
 *Date: February 10, 2026*
-

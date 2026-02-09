@@ -10,8 +10,9 @@ module.exports = {
         max_memory_restart: "400M", // Restart if leak occurs
 
         // Resilience
-        exp_backoff_restart_delay: 100, // Progressive restart delay
-        max_restarts: 10,
+        exp_backoff_restart_delay: 1000, // Progressive restart delay
+        restart_delay: 5000,
+        max_restarts: 1000,
         min_uptime: "1m",
 
         // Logging

@@ -129,10 +129,13 @@ async function main() {
 # ─── WALLET ───────────────────────────────
 PRIVATE_KEY=${env.PRIVATE_KEY || ''}
 RPC_URL=${env.RPC_URL || 'https://mainnet.base.org'}
+RPC_FALLBACK_URLS=${env.RPC_FALLBACK_URLS || ''}
 
 # ─── TELEGRAM BOT ─────────────────────────
 TELEGRAM_BOT_TOKEN=${env.TELEGRAM_BOT_TOKEN || ''}
 TELEGRAM_ADMIN_IDS=${env.TELEGRAM_ADMIN_IDS || ''}
+TELEGRAM_API_BASES=${env.TELEGRAM_API_BASES || 'https://api.telegram.org'}
+TELEGRAM_FILE_BASE=${env.TELEGRAM_FILE_BASE || ''}
 
 # ─── IPFS PROVIDERS ───────────────────────
 NFT_STORAGE_TOKEN=${env.NFT_STORAGE_TOKEN || ''}
@@ -140,6 +143,7 @@ PINATA_API_KEY=${env.PINATA_API_KEY || ''}
 PINATA_SECRET_KEY=${env.PINATA_SECRET_KEY || ''}
 INFURA_PROJECT_ID=${env.INFURA_PROJECT_ID || ''}
 INFURA_SECRET=${env.INFURA_SECRET || ''}
+IPFS_GATEWAYS=${env.IPFS_GATEWAYS || ''}
 
 # ─── DEFAULTS ─────────────────────────────
 DEFAULT_FEES=${env.DEFAULT_FEES || '200'}
@@ -169,7 +173,7 @@ ${colors.green}Next Steps:${colors.reset}
    ${colors.dim}node deploy.js${colors.reset}
 
 3. Or start Telegram bot:
-   ${colors.dim}npm run bot${colors.reset}
+   ${colors.dim}npm run start${colors.reset}
 
 ${colors.yellow}Files:${colors.reset}
   .env        → System config (private key, API keys)

@@ -18,7 +18,6 @@ import https from 'https';
 import { processImageInput, isIPFSCid, getProviderStatus } from './lib/ipfs.js';
 import { parseTokenCommand, parseFees } from './lib/parser.js';
 import { parseSmartSocialInput } from './lib/social-parser.js';
-import { loadConfig } from './lib/config.js';
 import { validateConfig } from './lib/validator.js';
 import { deployToken } from './clanker-core.js';
 import { handleFallback } from './lib/fallback.js';
@@ -31,19 +30,45 @@ import { createConfigFromSession } from './lib/config.js';
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ADMIN_CHAT_IDS = (process.env.TELEGRAM_ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
 const DEFAULT_FEES = DEFAULT_SESSION_FEES;
+const MARKDOWN_ERROR_TEXT = 'parse entities';
+const MAX_TELEGRAM_TEXT_LENGTH = 3900;
+const ETH_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
+const DEFAULT_TELEGRAM_ORIGIN = 'https://api.telegram.org';
+
+const normalizeBaseUrl = (value) => String(value || '').trim().replace(/\/+$/, '');
+const parseCsvUrls = (value) => (String(value || ''))
+    .split(',')
+    .map(s => normalizeBaseUrl(s))
+    .filter(Boolean);
+
+const configuredOrigins = parseCsvUrls(process.env.TELEGRAM_API_BASES);
+const fallbackOrigins = configuredOrigins.length > 0
+    ? configuredOrigins
+    : [normalizeBaseUrl(process.env.TELEGRAM_API_BASE) || DEFAULT_TELEGRAM_ORIGIN];
+const TELEGRAM_API_ORIGINS = [...new Set(fallbackOrigins)];
+const TELEGRAM_FILE_BASE = normalizeBaseUrl(process.env.TELEGRAM_FILE_BASE);
+let activeTelegramOriginIndex = 0;
+
+const buildTelegramApiUrl = (origin, method) => `${normalizeBaseUrl(origin)}/bot${BOT_TOKEN}/${method}`;
+const buildTelegramFileUrl = (origin, filePath) => {
+    const base = TELEGRAM_FILE_BASE || `${normalizeBaseUrl(origin)}/file`;
+    return `${base}/bot${BOT_TOKEN}/${filePath}`;
+};
 
 // ═══════════════════════════════════════════
 // TELEGRAM API - Robust Implementation
 // ═══════════════════════════════════════════
 
 const apiCall = async (method, data = {}, retries = 3) => {
-    for (let attempt = 1; attempt <= retries; attempt++) {
+    const totalAttempts = Math.max(retries, TELEGRAM_API_ORIGINS.length);
+    for (let attempt = 1; attempt <= totalAttempts; attempt++) {
+        const originIndex = (activeTelegramOriginIndex + attempt - 1) % TELEGRAM_API_ORIGINS.length;
+        const apiOrigin = TELEGRAM_API_ORIGINS[originIndex];
         try {
-            return await new Promise((resolve, reject) => {
+            const result = await new Promise((resolve, reject) => {
                 const body = JSON.stringify(data);
-                const req = https.request(`${API_BASE}/${method}`, {
+                const req = https.request(buildTelegramApiUrl(apiOrigin, method), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -55,9 +80,21 @@ const apiCall = async (method, data = {}, retries = 3) => {
                     res.on('data', chunk => responseData += chunk);
                     res.on('end', () => {
                         try {
-                            resolve(JSON.parse(responseData));
+                            const parsed = JSON.parse(responseData);
+                            resolve({
+                                ...parsed,
+                                _httpStatus: res.statusCode,
+                                _apiOrigin: apiOrigin
+                            });
                         } catch (e) {
-                            resolve({ ok: false, error: responseData });
+                            resolve({
+                                ok: false,
+                                error: responseData,
+                                description: responseData,
+                                error_code: res.statusCode,
+                                _httpStatus: res.statusCode,
+                                _apiOrigin: apiOrigin
+                            });
                         }
                     });
                 });
@@ -67,8 +104,25 @@ const apiCall = async (method, data = {}, retries = 3) => {
                 req.write(body);
                 req.end();
             });
+
+            // Telegram flood control retry
+            if (result?.ok === false && result?.error_code === 429 && attempt < totalAttempts) {
+                const retryAfter = Number(result?.parameters?.retry_after || attempt);
+                await sleep(Math.max(1000, retryAfter * 1000));
+                continue;
+            }
+
+            // Retry temporary Telegram/server failures
+            const httpStatus = Number(result?._httpStatus || 0);
+            if (result?.ok === false && (httpStatus >= 500 || result?.error_code >= 500) && attempt < totalAttempts) {
+                await sleep(1000 * attempt);
+                continue;
+            }
+
+            activeTelegramOriginIndex = originIndex;
+            return result;
         } catch (error) {
-            if (attempt === retries) throw error;
+            if (attempt === totalAttempts) throw error;
             await sleep(1000 * attempt);
         }
     }
@@ -76,24 +130,64 @@ const apiCall = async (method, data = {}, retries = 3) => {
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+const stripMarkdown = (text) => String(text || '').replace(/[*_`\[\]]/g, '');
+const truncateForTelegram = (text) => {
+    const value = String(text || '');
+    if (value.length <= MAX_TELEGRAM_TEXT_LENGTH) return value;
+    const overflow = value.length - MAX_TELEGRAM_TEXT_LENGTH;
+    return `${value.slice(0, MAX_TELEGRAM_TEXT_LENGTH - 40)}\n\n[truncated ${overflow} chars]`;
+};
+
+const isMarkdownParseError = (result) => {
+    if (!result || result.ok !== false) return false;
+    const desc = String(result.description || result.error || '').toLowerCase();
+    return desc.includes(MARKDOWN_ERROR_TEXT);
+};
+
+const normalizePrivateKey = () => {
+    const raw = String(process.env.PRIVATE_KEY || '').trim();
+    if (!/^(0x)?[0-9a-fA-F]{64}$/.test(raw)) return null;
+    return raw.startsWith('0x') ? raw : `0x${raw}`;
+};
+
+const isEthereumAddress = (value) => ETH_ADDRESS_REGEX.test(String(value || '').trim());
+
 const sendMessage = async (chatId, text, options = {}) => {
-    // Escape special markdown chars in user content
-    const safeText = text.replace(/([_*\[\]()~`>#+=|{}.!-])/g, '\\$1');
+    const safeText = truncateForTelegram(text);
+    const markdownPayload = {
+        chat_id: chatId,
+        text: safeText,
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
+        ...options
+    };
+
     try {
-        return await apiCall('sendMessage', {
-            chat_id: chatId,
-            text,
-            parse_mode: 'Markdown',
-            disable_web_page_preview: true,
-            ...options
-        });
+        const result = await apiCall('sendMessage', markdownPayload);
+        if (result?.ok !== false) {
+            return result;
+        }
+        if (!isMarkdownParseError(result)) {
+            console.warn(`Telegram sendMessage failed: ${result?.description || 'unknown error'}`);
+            return result;
+        }
     } catch (e) {
-        // Fallback without markdown if it fails
-        return await apiCall('sendMessage', {
-            chat_id: chatId,
-            text: text.replace(/[*_`\[\]]/g, ''),
-            ...options
-        });
+        console.warn(`Telegram sendMessage request error: ${e.message}`);
+    }
+
+    const plainPayload = {
+        chat_id: chatId,
+        text: stripMarkdown(safeText),
+        disable_web_page_preview: true,
+        ...options
+    };
+    delete plainPayload.parse_mode;
+
+    try {
+        return await apiCall('sendMessage', plainPayload);
+    } catch (e) {
+        console.error(`Telegram sendMessage fallback failed: ${e.message}`);
+        return { ok: false, error: e.message, description: e.message };
     }
 };
 
@@ -103,21 +197,47 @@ const getFile = async (fileId) => {
     try {
         const result = await apiCall('getFile', { file_id: fileId });
         if (result.ok && result.result.file_path) {
-            return `https://api.telegram.org/file/bot${BOT_TOKEN}/${result.result.file_path}`;
+            return buildTelegramFileUrl(result._apiOrigin || TELEGRAM_API_ORIGINS[activeTelegramOriginIndex], result.result.file_path);
         }
     } catch (e) { }
     return null;
 };
 
 const editMessage = async (chatId, messageId, text) => {
+    const safeText = truncateForTelegram(text);
+    if (!messageId) {
+        return await sendMessage(chatId, safeText);
+    }
+
     try {
-        await apiCall('editMessageText', {
+        const result = await apiCall('editMessageText', {
             chat_id: chatId,
             message_id: messageId,
-            text,
+            text: safeText,
             parse_mode: 'Markdown'
         });
-    } catch (e) { }
+        if (result?.ok !== false) {
+            return result;
+        }
+        if (!isMarkdownParseError(result)) {
+            console.warn(`Telegram editMessageText failed: ${result?.description || 'unknown error'}`);
+            return result;
+        }
+    } catch (e) {
+        console.warn(`Telegram editMessageText request error: ${e.message}`);
+    }
+
+    const plainEdit = await apiCall('editMessageText', {
+        chat_id: chatId,
+        message_id: messageId,
+        text: stripMarkdown(safeText)
+    });
+
+    if (plainEdit?.ok === false) {
+        return await sendMessage(chatId, safeText);
+    }
+
+    return plainEdit;
 };
 
 const sendButtons = async (chatId, text, buttons) => {
@@ -150,9 +270,10 @@ const isAuthorized = (chatId) => {
 // ═══════════════════════════════════════════
 
 const validatePrivateKey = () => {
-    const pk = process.env.PRIVATE_KEY;
-    if (!pk) return { valid: false, error: 'PRIVATE_KEY not configured' };
-    if (pk.length < 64) return { valid: false, error: 'PRIVATE_KEY invalid' };
+    const raw = String(process.env.PRIVATE_KEY || '').trim();
+    if (!raw) return { valid: false, error: 'PRIVATE_KEY not configured' };
+    const pk = normalizePrivateKey();
+    if (!pk) return { valid: false, error: 'PRIVATE_KEY invalid' };
     return { valid: true };
 };
 
@@ -182,7 +303,7 @@ const handleStart = async (chatId, username) => {
     const storageStatus = providers.any ? '✅ Active' : '⚠️ Limited';
 
     await sendMessage(chatId, `
-🤖 *System Online: Clank & Claw v2.6.4*
+🤖 *System Online: Clank & Claw v2.6.5*
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 👤 *Operator:* @${username || 'Agent'}
@@ -261,8 +382,11 @@ const handleStatus = async (chatId) => {
         const { base } = await import('viem/chains');
         const { privateKeyToAccount } = await import('viem/accounts');
 
-        const pk = process.env.PRIVATE_KEY;
-        const account = privateKeyToAccount(pk.startsWith('0x') ? pk : `0x${pk}`);
+        const cleanKey = normalizePrivateKey();
+        if (!cleanKey) {
+            return await sendMessage(chatId, '❌ PRIVATE_KEY invalid');
+        }
+        const account = privateKeyToAccount(cleanKey);
         const client = createPublicClient({ chain: base, transport: http() });
         const balance = await client.getBalance({ address: account.address });
         const eth = parseFloat(formatEther(balance));
@@ -306,8 +430,9 @@ ${status.ready ? '✅ *Ready to deploy!* Type \`/confirm\`' : `⏳ Missing: ${st
 
 const handleSpoof = async (chatId, address) => {
     const session = getSession(chatId);
+    const target = String(address || '').trim();
 
-    if (!address || !address.startsWith('0x') || address.length !== 42) {
+    if (!isEthereumAddress(target)) {
         return await sendMessage(chatId, `
 🎭 *Spoofing Mode*
 ━━━━━━━━━━━━━━━━━━━━━
@@ -320,12 +445,12 @@ Current: ${session.token.spoofTo ? `\`${session.token.spoofTo}\`` : '_None_'}
         `.trim());
     }
 
-    session.token.spoofTo = address;
+    session.token.spoofTo = target;
     await sendMessage(chatId, `
 🎭 *Stealth Mode Activated*
 
 All rewards will be sent to:
-\`${address}\`
+\`${target}\`
 
 This address will NOT appear as token admin.
     `.trim());
@@ -396,9 +521,8 @@ ${status.ready ? '\n✅ Ready! Type \`yes\` to deploy' : ''}
 };
 
 const handleDeploy = async (chatId) => {
-    const session = getSession(chatId);
+    const session = resetSession(chatId);
     session.state = 'wizard_name';
-    session.token = { ...createSession().token };
     session.createdAt = Date.now();
 
     await sendMessage(chatId, `
@@ -611,7 +735,7 @@ const checkAndPrompt = async (chatId, session) => {
 🚀 *DEPLOYMENT DASHBOARD*
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-� *Token Information*
+📋 *Token Information*
 • *Name:* ${t.name}
 • *Symbol:* $${t.symbol}
 • *Fees:* ${totalFee}% (${t.fees.clankerFee}/${t.fees.pairedFee} bps)
@@ -669,13 +793,16 @@ const executeDeploy = async (chatId, session) => {
     try {
         // Get Deployer Address for Config
         const { privateKeyToAccount } = await import('viem/accounts');
-        const pk = process.env.PRIVATE_KEY;
-        const cleanKey = pk.startsWith('0x') ? pk : `0x${pk}`;
+        const cleanKey = normalizePrivateKey();
+        if (!cleanKey) {
+            throw new Error('PRIVATE_KEY invalid');
+        }
         const account = privateKeyToAccount(cleanKey);
 
         // Build Config WITHOUT process.env side-effects
         // This ensures thread safety for concurrent deployments
-        const config = createConfigFromSession(t, account.address);
+        let config = createConfigFromSession(t, account.address);
+        config = validateConfig(config);
 
         console.log(`🚀 Bot Deploy Request: ${t.name} (${t.symbol}) from ChatID: ${chatId}`);
 
@@ -683,15 +810,18 @@ const executeDeploy = async (chatId, session) => {
         const result = await deployToken(config);
 
         if (result.success) {
+            const addressDisplay = result.address || 'Not detected (check tx link)';
+            const txDisplay = result.txHash ? `${result.txHash.substring(0, 20)}...` : 'N/A';
+            const scanLabel = result.address ? 'View on Basescan' : 'View TX on Basescan';
             const successMsg = `
 🎉 *DEPLOYED SUCCESSFULLY!*
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 📛 *${t.name}* (${t.symbol})
-📍 Address: \`${result.address}\`
-🔗 [View on Basescan](${result.scanUrl})
+📍 Address: \`${addressDisplay}\`
+🔗 [${scanLabel}](${result.scanUrl})
 
-💰 TX: \`${result.txHash?.substring(0, 20)}...\`
+💰 TX: \`${txDisplay}\`
 
 Your token is now live on Base!
 ${t.spoofTo ? '\n\n🎭 Rewards routed to stealth address.' : ''}
@@ -806,8 +936,12 @@ const poll = async () => {
             allowed_updates: ['message', 'callback_query']
         });
 
-        if (result.ok && result.result?.length > 0) {
-            consecutiveErrors = 0;
+        if (!result?.ok) {
+            throw new Error(result?.description || 'getUpdates failed');
+        }
+
+        consecutiveErrors = 0;
+        if (result.result?.length > 0) {
             for (const update of result.result) {
                 lastUpdateId = update.update_id;
                 try {
@@ -835,7 +969,7 @@ const poll = async () => {
 
 const main = async () => {
     console.log('');
-    console.log('🐾 Clank & Claw Telegram Bot v2.6.4');
+    console.log('🐾 Clank & Claw Telegram Bot v2.6.5');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     if (!BOT_TOKEN) {
@@ -846,7 +980,7 @@ const main = async () => {
     // Verify bot
     const me = await apiCall('getMe');
     if (!me.ok) {
-        console.error('❌ Invalid bot token');
+        console.error(`❌ Invalid bot token (${me.description || 'unknown error'})`);
         process.exit(1);
     }
 
@@ -863,6 +997,10 @@ const main = async () => {
     console.log(`${pkCheck.valid ? '✅' : '❌'} Wallet: ${pkCheck.valid ? 'Ready' : pkCheck.error}`);
     console.log(`${ipfsStatus.any ? '✅' : '⚠️'} IPFS: ${ipfsProviders.length > 0 ? ipfsProviders.join(', ') : 'Not configured'}`);
     console.log(`📍 Admins: ${ADMIN_CHAT_IDS.length > 0 ? ADMIN_CHAT_IDS.join(', ') : 'All allowed'}`);
+    console.log(`🌐 Telegram API: ${TELEGRAM_API_ORIGINS.join(' | ')}`);
+    if (TELEGRAM_FILE_BASE) {
+        console.log(`🌐 Telegram File Base: ${TELEGRAM_FILE_BASE}`);
+    }
     console.log('');
     console.log('🔄 Polling for updates...');
     console.log('');

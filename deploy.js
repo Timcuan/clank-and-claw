@@ -128,9 +128,10 @@ async function main() {
                 return;
             }
 
+            const addressDisplay = result.address || 'Not detected (check tx logs)';
             console.log('\n════════════════════════════════════');
             console.log('🎉 \x1b[32mDEPLOYMENT SUCCESSFUL\x1b[0m');
-            console.log(`📍 Address:  \x1b[36m${result.address}\x1b[0m`);
+            console.log(`📍 Address:  \x1b[36m${addressDisplay}\x1b[0m`);
             console.log(`🔗 Scan:     \x1b[34m${result.scanUrl}\x1b[0m`);
             console.log('════════════════════════════════════');
         } else {

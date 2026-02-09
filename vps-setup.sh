@@ -16,6 +16,16 @@ REPO_URL="https://github.com/Timcuan/clank-and-claw.git"
 
 echo "🚀 Starting Clank & Claw VPS Setup..."
 
+check_endpoint() {
+    local url="$1"
+    local label="$2"
+    if curl -fsS --max-time 8 "$url" >/dev/null 2>&1; then
+        echo "✅ ${label} reachable"
+    else
+        echo "⚠️  ${label} unreachable (check DNS/firewall/gateway)"
+    fi
+}
+
 # ─────────────────────────────────────────
 # 1. System Updates
 # ─────────────────────────────────────────
@@ -26,7 +36,7 @@ $SUDO apt update -y && $SUDO apt upgrade -y
 # 2. Install Dependencies
 # ─────────────────────────────────────────
 echo "🛠️  Installing dependencies..."
-$SUDO apt install -y curl git build-essential python3 tmux ufw jq
+$SUDO apt install -y curl git build-essential python3 tmux ufw jq dnsutils ca-certificates netcat-openbsd
 
 # ─────────────────────────────────────────
 # 3. Install Node.js LTS
@@ -48,7 +58,12 @@ if [ ! -d "${PROJECT_DIR}/.git" ]; then
     git clone "${REPO_URL}" "${PROJECT_DIR}"
 else
     echo "🔄 Pulling latest changes..."
-    git -C "${PROJECT_DIR}" pull --ff-only || git -C "${PROJECT_DIR}" reset --hard origin/main
+    if ! git -C "${PROJECT_DIR}" pull --ff-only; then
+        echo "⚠️  Fast-forward pull failed. Trying safe rebase update..."
+        git -C "${PROJECT_DIR}" fetch origin
+        git -C "${PROJECT_DIR}" checkout main
+        git -C "${PROJECT_DIR}" pull --rebase origin main
+    fi
 fi
 
 cd "${PROJECT_DIR}"
@@ -119,15 +134,59 @@ node openclaw-handler.js "$@"
 EOF
 chmod +x ~/openclaw.sh
 
+# Network diagnostics helper
+cat > ~/claw-netcheck.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+
+echo "🔎 Clank & Claw Network Check"
+echo "=============================="
+
+check() {
+  local label="$1"
+  local cmd="$2"
+  if bash -lc "$cmd" >/dev/null 2>&1; then
+    echo "✅ $label"
+  else
+    echo "❌ $label"
+  fi
+}
+
+check "DNS resolve api.telegram.org" "getent hosts api.telegram.org"
+check "DNS resolve mainnet.base.org" "getent hosts mainnet.base.org"
+check "Telegram API health" "curl -fsS --max-time 8 https://api.telegram.org"
+check "Base RPC health" "curl -fsS --max-time 8 -H 'content-type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]}' https://mainnet.base.org"
+check "Gateway pinata" "curl -fsS --max-time 8 https://gateway.pinata.cloud/ipfs"
+
+echo ""
+echo "Tips:"
+echo "- Verify .env: RPC_URL / RPC_FALLBACK_URLS / TELEGRAM_API_BASES / IPFS_GATEWAYS"
+echo "- If DNS unstable: sudo systemctl restart systemd-resolved"
+echo "- Use PM2 logs: pm2 logs clanker-bot"
+EOF
+chmod +x ~/claw-netcheck.sh
+
 # Telegram bot runner
 cat > ~/run-bot.sh << 'EOF'
 #!/bin/bash
 cd ~/clank-and-claw
+if [ -x ~/claw-netcheck.sh ]; then
+  ~/claw-netcheck.sh || true
+fi
 echo "🤖 Starting Clank & Claw Telegram Bot..."
 echo "   Press Ctrl+C to stop"
 node telegram-bot.js
 EOF
 chmod +x ~/run-bot.sh
+
+# Ensure log directory exists for PM2 ecosystem
+mkdir -p ~/clank-and-claw/logs
+
+# Quick network preflight summary
+echo "🌐 Running quick network preflight..."
+check_endpoint "https://api.telegram.org" "Telegram API"
+check_endpoint "https://mainnet.base.org" "Base RPC"
+check_endpoint "https://gateway.pinata.cloud/ipfs" "IPFS Gateway"
 
 # ─────────────────────────────────────────
 # Done!
@@ -143,6 +202,7 @@ echo "🚀 Quick Commands:"
 echo "   ~/deploy-token.sh              # Deploy from .env"
 echo "   ~/openclaw.sh --file input.json # Deploy from JSON"
 echo "   ~/run-bot.sh                   # Start Telegram bot"
+echo "   ~/claw-netcheck.sh             # Diagnose VPS network/DNS/gateway"
 echo ""
 echo "🤖 Telegram Bot Setup:"
 echo "   1. nano ~/clank-and-claw/.env  # Add TELEGRAM_BOT_TOKEN"

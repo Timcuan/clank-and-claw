@@ -173,20 +173,29 @@ const outputJson = (data) => {
 };
 
 const main = async () => {
+    const originalLog = console.log;
+    const originalWarn = console.warn;
+    const originalError = console.error;
+    const logs = [];
+    let capturing = false;
+
+    const restoreConsole = () => {
+        console.log = originalLog;
+        console.warn = originalWarn;
+        console.error = originalError;
+        capturing = false;
+    };
+
     try {
         const input = await loadInput();
         validateInput(input);
         applyInputToEnv(input);
 
-        // Capture console output
-        const originalLog = console.log;
-        const originalWarn = console.warn;
-        const originalError = console.error;
-        const logs = [];
-
+        // Capture console output from deployment internals
         console.log = (...args) => logs.push({ level: 'info', message: args.join(' ') });
         console.warn = (...args) => logs.push({ level: 'warn', message: args.join(' ') });
         console.error = (...args) => logs.push({ level: 'error', message: args.join(' ') });
+        capturing = true;
 
         // Run deployment
         const { loadConfig } = await import('./lib/config.js');
@@ -197,10 +206,7 @@ const main = async () => {
         config = validateConfig(config);
         const result = await deployToken(config);
 
-        // Restore console
-        console.log = originalLog;
-        console.warn = originalWarn;
-        console.error = originalError;
+        restoreConsole();
 
         // Output JSON result
         outputJson({
@@ -216,10 +222,11 @@ const main = async () => {
         process.exit(result.success ? 0 : 1);
 
     } catch (err) {
+        if (capturing) restoreConsole();
         outputJson({
             success: false,
             error: err.message,
-            logs: []
+            logs
         });
         process.exit(1);
     }

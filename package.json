@@ -1,6 +1,6 @@
 {
   "name": "clank-and-claw",
-  "version": "2.6.4",
+  "version": "2.6.5",
   "description": "Clanker Token Deployment - Telegram Bot & AI Agent",
   "main": "deploy.js",
   "scripts": {
@@ -8,7 +8,8 @@
     "deploy": "node deploy.js",
     "spoof": "node deploy.js --spoof",
     "setup": "node setup.js",
-    "test": "DRY_RUN=true node deploy.js"
+    "test": "DRY_RUN=true node deploy.js",
+    "test:hardening": "node --test test/*.test.js"
   },
   "keywords": [
     "clanker",

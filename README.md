@@ -1,5 +1,5 @@
 
-# 🐾 Clank & Claw v2.6.4 (Agency Grade)
+# 🐾 Clank & Claw v2.6.5 (Agency Grade)
 
 **The Ultimate Agentic Token Deployment Suite for Base**
 
@@ -11,7 +11,7 @@ Deploy High-Performance ERC-20 tokens via **Telegram Bot** (with premium UI/UX) 
 
 ---
 
-## ✨ Key Features (v2.6.4)
+## ✨ Key Features (v2.6.5)
 
 ### 🤖 Premium Telegram Agent
 - **Dashboard UI**: Real-time deployment status, wallet balance, and storage health.
@@ -84,6 +84,34 @@ Uses a session-based architecture where every user's configuration is isolated i
 
 ---
 
+## 🌐 Network Resilience (VPS)
+
+For unstable VPS providers or intermittent gateway failures, configure fallback endpoints in `.env`:
+
+```bash
+RPC_URL=https://mainnet.base.org
+RPC_FALLBACK_URLS=https://base-mainnet.g.alchemy.com/v2/<KEY>,https://base.publicnode.com
+
+TELEGRAM_API_BASES=https://api.telegram.org
+# Optional file endpoint override
+TELEGRAM_FILE_BASE=
+
+IPFS_GATEWAYS=https://gateway.pinata.cloud/ipfs/{cid},https://nftstorage.link/ipfs/{cid},https://cloudflare-ipfs.com/ipfs/{cid}
+```
+
+What this gives you:
+- **RPC Failover**: Deploy path probes configured RPC endpoints and auto-picks a healthy one.
+- **Receipt Recovery**: If primary RPC times out after TX submission, the bot checks fallback RPCs for receipt recovery.
+- **Telegram Gateway Failover**: Bot can rotate across configured Telegram API bases.
+- **IPFS Gateway Redundancy**: Upload result now returns multiple gateway URLs.
+
+Hardening test suite:
+```bash
+npm run test:hardening
+```
+
+---
+
 ## 📁 Project Structure
 
 ```
@@ -134,3 +162,7 @@ To ensure the bot runs 24/7 with auto-restart capabilities, use **PM2**.
    pm2 monit     # Dashboard
    ```
 
+4. **Network Diagnostics (VPS helper):**
+   ```bash
+   ~/claw-netcheck.sh
+   ```

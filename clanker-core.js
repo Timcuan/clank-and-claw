@@ -50,15 +50,26 @@ export async function deployToken(config, options = {}) {
         // 3. Client Initialization & Network Check
         const account = privateKeyToAccount(cleanKey);
 
+        // ⚡ Turbo Client Configuration for Base L2
         const publicClient = createPublicClient({
             chain: base,
-            transport: http(rpcUrl, { timeout: 60_000, retryCount: 5, retryDelay: 2000 })
+            transport: http(rpcUrl, {
+                timeout: 15_000,     // Fail fast (15s)
+                retryCount: 3,       // Retry 3 times
+                retryDelay: 500      // Quick retry (500ms)
+            }),
+            pollingInterval: 400     // Check for receipt every 400ms (Base block time is 2s)
         });
 
         const walletClient = createWalletClient({
             account,
             chain: base,
-            transport: http(rpcUrl, { timeout: 60_000, retryCount: 5, retryDelay: 2000 })
+            transport: http(rpcUrl, {
+                timeout: 15_000,
+                retryCount: 3,
+                retryDelay: 500
+            }),
+            pollingInterval: 400
         });
 
         // Network ID Check

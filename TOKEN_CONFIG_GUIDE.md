@@ -51,6 +51,11 @@ If you get stuck or the bot doesn't understand, it will:
 | BPS Split | `"500 500"` | 5% + 5% |
 | Natural | `"with 10 percent fees"` | 5% + 5% |
 
+### 📢 Default Standards (v2.6.2+)
+If no fees are provided, the system defaults to:
+- **Static Fees:** 5% Total (2.5% Clanker + 2.5% Paired)
+- **Dynamic Fees:** 1% Base - 10% Max
+
 ## Context Platforms
 
 | Platform | URL Format |

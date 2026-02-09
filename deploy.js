@@ -56,10 +56,10 @@ async function main() {
             decayFilterBps: parseInt(process.env.FEE_DYNAMIC_DECAY || "9500"),
         };
         // Cap only if STRICT_MODE is on. HIGH_TAX allows up to 3000 (SDK Limit)
-        if (strictMode && fees.maxFee > 500) fees.maxFee = 500;
-        else if (fees.maxFee > 500 && !highTax) {
-            console.warn("⚠️  WARNING: Fees > 5% without HIGH_TAX=true. Capping for safety.");
+        if (strictMode && fees.maxFee > 500) {
             fees.maxFee = 500;
+        } else if (fees.maxFee > 500) {
+            console.log(`🏴‍☠️  High Dynamic Max Fee Detected (${fees.maxFee / 100}%). Proceeding as requested.`);
         }
     } else {
         fees = {
@@ -69,12 +69,11 @@ async function main() {
         };
         const totalFee = fees.clankerFee + fees.pairedFee;
         if (strictMode && totalFee > 500) {
+            console.warn("⚠️  STRICT_MODE: Capping fees at 5%. Disable STRICT_MODE for higher taxes.");
             fees.clankerFee = 250;
             fees.pairedFee = 250;
-        } else if (totalFee > 500 && !highTax) {
-            console.warn("⚠️  WARNING: High Fees Detected without HIGH_TAX=true. Adjusting to 5% total.");
-            fees.clankerFee = 250;
-            fees.pairedFee = 250;
+        } else if (totalFee > 500) {
+            console.log(`🏴‍☠️  High Tax Detected (${totalFee / 100}%). Proceeding as requested.`);
         }
     }
 
@@ -96,14 +95,32 @@ async function main() {
         } catch (e) { console.error("❌ Error parsing REWARDS_JSON"); }
     } else {
         if (process.env.REWARD_CREATOR && process.env.REWARD_INTERFACE) {
-            rewards.recipients.push({ recipient: process.env.REWARD_CREATOR, bps: 9990, token: "Both" });
-            rewards.recipients.push({ recipient: process.env.REWARD_INTERFACE, bps: 10, token: "Both" });
+            const creatorAdmin = process.env.REWARD_CREATOR_ADMIN || tokenAdmin;
+            const interfaceAdmin = process.env.REWARD_INTERFACE_ADMIN || tokenAdmin;
+
+            rewards.recipients.push({
+                recipient: process.env.REWARD_CREATOR,
+                admin: creatorAdmin,
+                bps: 9990,
+                token: "Both"
+            });
+            rewards.recipients.push({
+                recipient: process.env.REWARD_INTERFACE,
+                admin: interfaceAdmin,
+                bps: 10,
+                token: "Both"
+            });
         } else {
             if (!rewardRecipient) {
                 console.error("❌ Error: Missing TOKEN_ADMIN/REWARD_RECIPIENT (or REWARD_CREATOR + REWARD_INTERFACE).");
                 process.exit(1);
             }
-            rewards.recipients.push({ recipient: rewardRecipient, bps: 10000, token: "Both" });
+            rewards.recipients.push({
+                recipient: rewardRecipient,
+                admin: tokenAdmin,
+                bps: 10000,
+                token: "Both"
+            });
         }
     }
 

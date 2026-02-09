@@ -22,6 +22,7 @@ import { loadConfig } from './lib/config.js';
 import { validateConfig } from './lib/validator.js';
 import { deployToken } from './clanker-core.js';
 import { handleFallback } from './lib/fallback.js';
+import { sessionManager, DEFAULT_SESSION_FEES } from './lib/session-manager.js';
 
 // ═══════════════════════════════════════════
 // CONFIGURATION
@@ -30,11 +31,7 @@ import { handleFallback } from './lib/fallback.js';
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const ADMIN_CHAT_IDS = (process.env.TELEGRAM_ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
 const API_BASE = `https://api.telegram.org/bot${BOT_TOKEN}`;
-const DEFAULT_FEES = { clankerFee: 100, pairedFee: 100 }; // 2% default
-const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
-
-// Session storage with auto-cleanup
-const sessions = new Map();
+const DEFAULT_FEES = DEFAULT_SESSION_FEES;
 
 // ═══════════════════════════════════════════
 // TELEGRAM API - Robust Implementation
@@ -139,40 +136,8 @@ const sendButtons = async (chatId, text, buttons) => {
 // SESSION MANAGEMENT - With Auto-Cleanup
 // ═══════════════════════════════════════════
 
-const createSession = () => ({
-    state: 'idle',
-    createdAt: Date.now(),
-    token: {
-        name: null,
-        symbol: null,
-        image: null,
-        description: null,
-        fees: { ...DEFAULT_FEES },
-        context: null,
-        admin: null,
-        spoofTo: null
-    },
-    pendingMessageId: null
-});
-
-const getSession = (chatId) => {
-    let session = sessions.get(chatId);
-
-    // Check timeout
-    if (session && (Date.now() - session.createdAt > SESSION_TIMEOUT_MS)) {
-        sessions.delete(chatId);
-        session = null;
-    }
-
-    if (!session) {
-        session = createSession();
-        sessions.set(chatId, session);
-    }
-
-    return session;
-};
-
-const resetSession = (chatId) => sessions.delete(chatId);
+const getSession = (chatId) => sessionManager.get(chatId);
+const resetSession = (chatId) => sessionManager.reset(chatId);
 
 const isAuthorized = (chatId) => {
     if (ADMIN_CHAT_IDS.length === 0) return true;

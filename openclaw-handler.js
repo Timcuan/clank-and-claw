@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { normalizeBool, normalizeNumber, pick, setEnvIf } from './lib/utils.js';
 
 const readStdin = async () => {
     return new Promise((resolve, reject) => {
@@ -16,32 +17,6 @@ const parseJson = (raw, label) => {
     } catch (err) {
         throw new Error(`Invalid JSON in ${label}: ${err.message}`);
     }
-};
-
-const pick = (obj, keys) => {
-    for (const key of keys) {
-        if (obj && obj[key] !== undefined) return obj[key];
-    }
-    return undefined;
-};
-
-const setEnvIf = (key, value) => {
-    if (value === undefined || value === null || value === '') return;
-    process.env[key] = String(value);
-};
-
-const normalizeBool = (value) => {
-    if (value === undefined || value === null) return undefined;
-    if (typeof value === 'boolean') return value;
-    if (typeof value === 'number') return value !== 0;
-    if (typeof value === 'string') return value.toLowerCase() === 'true' || value === '1';
-    return undefined;
-};
-
-const normalizeNumber = (value) => {
-    if (value === undefined || value === null || value === '') return undefined;
-    const num = Number(value);
-    return Number.isNaN(num) ? undefined : num;
 };
 
 const loadInput = async () => {
@@ -92,13 +67,11 @@ const applyInputToEnv = (input) => {
     setEnvIf('CONTEXT_MESSAGE_ID', pick(input, ['CONTEXT_MESSAGE_ID']) ?? context.messageId);
 
     const strictMode = pick(input, ['STRICT_MODE', 'strictMode']);
-    const highTax = pick(input, ['HIGH_TAX', 'highTax']);
     const dryRun = pick(input, ['DRY_RUN', 'dryRun']);
     const vanity = pick(input, ['VANITY', 'vanity']);
 
     const strictModeEffective = normalizeBool(strictMode);
-    setEnvIf('STRICT_MODE', strictModeEffective === undefined ? true : strictModeEffective);
-    setEnvIf('HIGH_TAX', normalizeBool(highTax));
+    setEnvIf('STRICT_MODE', strictModeEffective === undefined ? 'true' : String(strictModeEffective));
     setEnvIf('DRY_RUN', normalizeBool(dryRun));
     setEnvIf('VANITY', normalizeBool(vanity));
 

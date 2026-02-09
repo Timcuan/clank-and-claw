@@ -1,15 +1,21 @@
 {
-  "name": "clanker-default",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "name": "clank-and-claw",
+  "version": "2.0.0",
+  "description": "Clanker Token Deployment Tool with High Tax Support",
+  "main": "deploy.js",
   "scripts": {
+    "deploy": "node deploy.js",
     "openclaw": "node openclaw-handler.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "DRY_RUN=true node deploy.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "clanker",
+    "base",
+    "token",
+    "deployment"
+  ],
+  "author": "Timcuan",
+  "license": "MIT",
   "type": "module",
   "dependencies": {
     "clanker-sdk": "^4.2.10",

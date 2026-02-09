@@ -664,7 +664,7 @@ const executeDeploy = async (chatId, session) => {
         return await sendMessage(chatId, `❌ Missing: ${status.missing.join(', ')}`);
     }
 
-    const statusMsg = await sendMessage(chatId, '⏳ *Deploying token...*\nThis may take 30-60 seconds.');
+    const statusMsg = await sendMessage(chatId, '🚀 *Launching...*\nTurbo-confirmation active.');
 
     try {
         // Get Deployer Address for Config

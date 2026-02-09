@@ -19,6 +19,7 @@ export async function deployToken(config, options = {}) {
     } = options;
 
     console.log(`\n⏳ \x1b[36mInitializing Deployment Sequence...\x1b[0m`);
+    console.log(`🚀 \x1b[32mTurbo Mode:\x1b[0m Active (1s heart-beat)`);
 
     // 1. Dry Run Handling
     if (dryRun) {
@@ -54,22 +55,22 @@ export async function deployToken(config, options = {}) {
         const publicClient = createPublicClient({
             chain: base,
             transport: http(rpcUrl, {
-                timeout: 15_000,     // Fail fast (15s)
-                retryCount: 3,       // Retry 3 times
-                retryDelay: 500      // Quick retry (500ms)
+                timeout: 20_000,     // 20s (Safe)
+                retryCount: 3,
+                retryDelay: 1000     // 1s (Standard)
             }),
-            pollingInterval: 400     // Check for receipt every 400ms (Base block time is 2s)
+            pollingInterval: 1000    // 1s Loop
         });
 
         const walletClient = createWalletClient({
             account,
             chain: base,
             transport: http(rpcUrl, {
-                timeout: 15_000,
+                timeout: 20_000,
                 retryCount: 3,
-                retryDelay: 500
+                retryDelay: 1000
             }),
-            pollingInterval: 400
+            pollingInterval: 1000
         });
 
         // Network ID Check

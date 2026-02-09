@@ -174,35 +174,29 @@ const getReadyStatus = (token) => {
 
 const handleStart = async (chatId, username) => {
     const pkCheck = validatePrivateKey();
-    const ipfsStatus = getProviderStatus();
+    const providers = getProviderStatus();
 
-    const statusEmoji = pkCheck.valid ? '✅' : '❌';
-    const ipfsEmoji = ipfsStatus.any ? '✅' : '⚠️';
-
-    let ipfsProviders = [];
-    if (ipfsStatus.nftStorage) ipfsProviders.push('NFT.Storage');
-    if (ipfsStatus.pinata) ipfsProviders.push('Pinata');
-    if (ipfsStatus.infura) ipfsProviders.push('Infura');
+    // Status Logic
+    const walletStatus = pkCheck.valid ? '✅ Active' : '❌ Missing Key';
+    const storageStatus = providers.any ? '✅ Active' : '⚠️ Limited';
 
     await sendMessage(chatId, `
-🐾 *Clank & Claw Token Deployer*
-━━━━━━━━━━━━━━━━━━━━━
+🤖 *System Online: Clank & Claw v2.6*
+━━━━━━━━━━━━━━━━━━━━━━━━
 
-Welcome @${username || 'agent'}! Deploy tokens on Base with ease.
+👤 *Operator:* @${username || 'Agent'}
+🔐 *Wallet:* ${walletStatus}
+📦 *Storage:* ${storageStatus}
 
-*System Status:*
-${statusEmoji} Wallet: ${pkCheck.valid ? 'Ready' : pkCheck.error}
-${ipfsEmoji} IPFS: ${ipfsProviders.length > 0 ? ipfsProviders.join(', ') : 'Not configured'}
+🛠️ *Deployment Controls*
+• */deploy* - Start Wizard
+• */go* <SYMBOL> "<NAME>" <FEES> - Rapid Fire
+• */spoof* <ADDRESS> - Toggle Stealth Mode
 
-*Quick Commands:*
-• \`/go PEPE "Pepe Token" 10%\` → Fast deploy
-• \`/deploy\` → Step-by-step wizard
-• \`/status\` → Wallet balance
-• \`/config\` → Current settings
+💡 *Pro Tip:*
+You can just paste a "tweet link" to set context, or drag & drop an image anytime.
 
-*Or just describe your token:*
-_"Deploy TOKEN (Name) with 5% fees"_
-Then send image + tweet link!
+_Ready for instructions._
     `.trim());
 };
 
@@ -609,18 +603,28 @@ const checkAndPrompt = async (chatId, session) => {
         session.state = 'confirming';
         const t = session.token;
         const totalFee = (t.fees.clankerFee + t.fees.pairedFee) / 100;
+        const socialCount = Object.keys(t.socials || {}).length;
+        const contexts = t.socials ? Object.keys(t.socials).map(k => k.charAt(0).toUpperCase() + k.slice(1)).join(', ') : 'None';
 
         await sendMessage(chatId, `
-🚀 *READY TO DEPLOY*
-━━━━━━━━━━━━━━━━━━━━━
+🚀 *DEPLOYMENT DASHBOARD*
+━━━━━━━━━━━━━━━━━━━━━━━━
 
-📛 *${t.name}* (${t.symbol})
-🖼️ Image: \`${t.image?.substring(0, 15)}...\`
-💰 Fees: *${totalFee}%* (${t.fees.clankerFee}+${t.fees.pairedFee} bps)
-🔗 Context: ${t.context?.platform || 'none'} ${t.context?.messageId ? '✓' : ''}
-${t.spoofTo ? `🎭 Spoof: \`${t.spoofTo.substring(0, 10)}...\`` : ''}
+� *Token Information*
+• *Name:* ${t.name}
+• *Symbol:* $${t.symbol}
+• *Fees:* ${totalFee}% (${t.fees.clankerFee}/${t.fees.pairedFee} bps)
 
-Type *yes* to deploy or *no* to cancel
+🌍 *Deployment Context*
+• *Platform:* ${t.context?.platform ? t.context.platform.toUpperCase() : 'None'} ${t.context?.messageId ? '✅' : '❌'}
+• *Socials:* ${socialCount > 0 ? `${socialCount} added (${contexts})` : 'None'}
+
+⚙️ *Settings*
+• *Image:* Uploaded ✅
+${t.spoofTo ? `• *Spoofing:* ACTIVE 🎭\n  Target: \`${t.spoofTo}\`` : '• *Spoofing:* Inactive'}
+
+👉 Type *"/confirm"* or *"yes"* to LAUNCH!
+   Type *"/cancel"* to abort.
         `.trim());
     } else if (status.missing.length > 0) {
         const prompts = [];

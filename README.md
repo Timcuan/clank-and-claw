@@ -44,6 +44,11 @@ npm run setup
 ```
 *Follow the prompts to configure your Wallet (Private Key), RPC, and IPFS keys.*
 
+For VPS/manual setup, use the template:
+```bash
+cp .env.vps.example .env
+```
+
 ### 3. Usage
 
 #### 🤖 Run the Telegram Bot
@@ -59,6 +64,7 @@ npm run start
 | `/go <SYMBOL> "<NAME>" <FEES>` | Rapid deployment (skip steps) |
 | `/spoof <ADDRESS>` | Enable stealth spoofing to target address |
 | `/status` | Check wallet balance & storage providers |
+| `/health` | Deep health check (Telegram origins + RPC endpoints) |
 | `/cancel` | Abort current operation |
 
 #### 💻 Run via CLI
@@ -90,9 +96,9 @@ For unstable VPS providers or intermittent gateway failures, configure fallback 
 
 ```bash
 RPC_URL=https://mainnet.base.org
-RPC_FALLBACK_URLS=https://base-mainnet.g.alchemy.com/v2/<KEY>,https://base.publicnode.com
+RPC_FALLBACK_URLS=https://base-mainnet.g.alchemy.com/v2/<KEY>,https://base.publicnode.com,https://base.llamarpc.com
 
-TELEGRAM_API_BASES=https://api.telegram.org
+TELEGRAM_API_BASES=https://api.telegram.org,https://tg-api-1.example.com,https://tg-api-2.example.com
 # Optional file endpoint override
 TELEGRAM_FILE_BASE=
 
@@ -102,7 +108,10 @@ IPFS_GATEWAYS=https://gateway.pinata.cloud/ipfs/{cid},https://nftstorage.link/ip
 What this gives you:
 - **RPC Failover**: Deploy path probes configured RPC endpoints and auto-picks a healthy one.
 - **Receipt Recovery**: If primary RPC times out after TX submission, the bot checks fallback RPCs for receipt recovery.
+- **Status RPC Alignment**: `/status` now uses the same RPC fallback strategy so health readouts match real deploy behavior.
 - **Telegram Gateway Failover**: Bot can rotate across configured Telegram API bases.
+- **Safer Telegram Retry Policy**: Unknown 4xx gateway/proxy errors are treated as retryable, while known Telegram permanent errors are not retried.
+- **Live Health Command**: `/health` checks every configured Telegram and RPC endpoint, including response latency.
 - **IPFS Gateway Redundancy**: Upload result now returns multiple gateway URLs.
 
 Hardening test suite:

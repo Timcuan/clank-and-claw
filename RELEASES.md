@@ -1,3 +1,43 @@
+# 🚀 Release Notes - Clank & Claw v2.6.7 (Ops Healthcheck Patch)
+
+### 🩺 Runtime Diagnostics
+- **`/health` Command**: Added deep runtime check for all configured Telegram API origins and RPC endpoints.
+- **Latency Visibility**: Health output now includes per-endpoint response time and latest RPC block number.
+- **Operational Summary**: Health report shows wallet key readiness, IPFS provider status, active Telegram origin, preferred RPC, and active session count.
+
+### 🧰 VPS Operations
+- **VPS Env Template**: Added `.env.vps.example` with recommended multi-RPC and Telegram failover fields.
+- **Docs Sync**: Updated README and token guide with `/health` usage and template-driven VPS setup.
+
+---
+*Date: February 10, 2026*
+
+---
+
+# 🚀 Release Notes - Clank & Claw v2.6.6 (Telegram Reliability Patch)
+
+### 🌐 Telegram Gateway Hardening
+- **Retry Classifier Isolation**: Moved Telegram API retry classification into `lib/telegram-network.js` for clear logic and testability.
+- **Safer 4xx Handling**: Unknown 4xx responses from proxies/gateways are now treated as retryable (with origin rotation), while known Telegram-permanent errors are not retried.
+- **Connection Stability**: Enabled keep-alive HTTPS agent for Telegram API calls to reduce connection churn on VPS NAT gateways.
+
+### 🛡️ Message Delivery Hardening
+- **Edit Fallback Safety**: `editMessage` now reliably falls back to plain edit and then `sendMessage` on non-markdown failures.
+- **Message Not Modified Guard**: Explicitly handles Telegram `message is not modified` responses as non-fatal success.
+
+### 📷 Media Input Robustness
+- **No Double `getFile` Fetch**: Image documents now reuse pre-resolved Telegram file URL, preventing false failures from duplicate fetches.
+- **Document Detection Upgrade**: Added file extension fallback detection for image documents with missing/incorrect MIME type.
+
+### 🧪 Tests & Operations
+- **New Regression Tests**: Added `test/telegram-network.test.js` covering retry/permanent error classification paths.
+- **Graceful Shutdown**: Added `SIGINT`/`SIGTERM` handling to close keep-alive sockets cleanly during PM2 restarts.
+
+---
+*Date: February 10, 2026*
+
+---
+
 # 🚀 Release Notes - Clank & Claw v2.6.5 (Network Hardening)
 
 ### 🌐 VPS & Network Reliability

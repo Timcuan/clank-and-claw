@@ -23,6 +23,7 @@ import { deployToken } from './clanker-core.js';
 import { handleFallback } from './lib/fallback.js';
 import { sessionManager, DEFAULT_SESSION_FEES } from './lib/session-manager.js';
 import { createConfigFromSession } from './lib/config.js';
+import { isRetryableTelegramApiResult } from './lib/telegram-network.js';
 
 // ═══════════════════════════════════════════
 // CONFIGURATION
@@ -35,11 +36,25 @@ const MARKDOWN_ERROR_TEXT = 'parse entities';
 const MAX_TELEGRAM_TEXT_LENGTH = 3900;
 const ETH_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 const DEFAULT_TELEGRAM_ORIGIN = 'https://api.telegram.org';
+const DEFAULT_RPC_URL = 'https://mainnet.base.org';
+const MESSAGE_NOT_MODIFIED_TEXT = 'message is not modified';
+const TELEGRAM_HEALTH_TIMEOUT_MS = 12000;
+const RPC_HEALTH_TIMEOUT_MS = 10000;
+const TELEGRAM_HTTP_AGENT = new https.Agent({
+    keepAlive: true,
+    maxSockets: 50,
+    maxFreeSockets: 10,
+    timeout: 60000
+});
 
 const normalizeBaseUrl = (value) => String(value || '').trim().replace(/\/+$/, '');
 const parseCsvUrls = (value) => (String(value || ''))
     .split(',')
     .map(s => normalizeBaseUrl(s))
+    .filter(Boolean);
+const parseCsvValues = (value) => (String(value || ''))
+    .split(',')
+    .map(s => String(s || '').trim())
     .filter(Boolean);
 
 const configuredOrigins = parseCsvUrls(process.env.TELEGRAM_API_BASES);
@@ -56,12 +71,14 @@ const buildTelegramFileUrl = (origin, filePath) => {
     return `${base}/bot${BOT_TOKEN}/${filePath}`;
 };
 
+const formatHealthError = (value) => String(value || 'unknown error').replace(/\s+/g, ' ').trim();
+
 // ═══════════════════════════════════════════
 // TELEGRAM API - Robust Implementation
 // ═══════════════════════════════════════════
 
 const apiCall = async (method, data = {}, retries = 3) => {
-    const totalAttempts = Math.max(retries, TELEGRAM_API_ORIGINS.length);
+    const totalAttempts = Math.max(1, retries, TELEGRAM_API_ORIGINS.length);
     for (let attempt = 1; attempt <= totalAttempts; attempt++) {
         const originIndex = (activeTelegramOriginIndex + attempt - 1) % TELEGRAM_API_ORIGINS.length;
         const apiOrigin = TELEGRAM_API_ORIGINS[originIndex];
@@ -74,6 +91,7 @@ const apiCall = async (method, data = {}, retries = 3) => {
                         'Content-Type': 'application/json',
                         'Content-Length': Buffer.byteLength(body)
                     },
+                    agent: TELEGRAM_HTTP_AGENT,
                     timeout: 30000
                 }, (res) => {
                     let responseData = '';
@@ -105,17 +123,17 @@ const apiCall = async (method, data = {}, retries = 3) => {
                 req.end();
             });
 
-            // Telegram flood control retry
-            if (result?.ok === false && result?.error_code === 429 && attempt < totalAttempts) {
-                const retryAfter = Number(result?.parameters?.retry_after || attempt);
-                await sleep(Math.max(1000, retryAfter * 1000));
-                continue;
+            if (result?.ok !== false) {
+                activeTelegramOriginIndex = originIndex;
+                return result;
             }
 
-            // Retry temporary Telegram/server failures
-            const httpStatus = Number(result?._httpStatus || 0);
-            if (result?.ok === false && (httpStatus >= 500 || result?.error_code >= 500) && attempt < totalAttempts) {
-                await sleep(1000 * attempt);
+            if (isRetryableTelegramApiResult(result) && attempt < totalAttempts) {
+                const retryAfter = Number(result?.parameters?.retry_after || 0);
+                const delayMs = result?.error_code === 429
+                    ? Math.max(1000, retryAfter * 1000)
+                    : 1000 * attempt;
+                await sleep(delayMs);
                 continue;
             }
 
@@ -126,6 +144,49 @@ const apiCall = async (method, data = {}, retries = 3) => {
             await sleep(1000 * attempt);
         }
     }
+    throw new Error(`Telegram API call failed after ${totalAttempts} attempts`);
+};
+
+const apiCallAtOrigin = async (origin, method, data = {}) => {
+    return await new Promise((resolve, reject) => {
+        const body = JSON.stringify(data);
+        const req = https.request(buildTelegramApiUrl(origin, method), {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body)
+            },
+            agent: TELEGRAM_HTTP_AGENT,
+            timeout: TELEGRAM_HEALTH_TIMEOUT_MS
+        }, (res) => {
+            let responseData = '';
+            res.on('data', chunk => responseData += chunk);
+            res.on('end', () => {
+                try {
+                    const parsed = JSON.parse(responseData);
+                    resolve({
+                        ...parsed,
+                        _httpStatus: res.statusCode,
+                        _apiOrigin: origin
+                    });
+                } catch (e) {
+                    resolve({
+                        ok: false,
+                        error: responseData,
+                        description: responseData,
+                        error_code: res.statusCode,
+                        _httpStatus: res.statusCode,
+                        _apiOrigin: origin
+                    });
+                }
+            });
+        });
+
+        req.on('error', reject);
+        req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
+        req.write(body);
+        req.end();
+    });
 };
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -144,6 +205,12 @@ const isMarkdownParseError = (result) => {
     return desc.includes(MARKDOWN_ERROR_TEXT);
 };
 
+const isMessageNotModified = (result) => {
+    if (!result || result.ok !== false) return false;
+    const desc = String(result.description || result.error || '').toLowerCase();
+    return desc.includes(MESSAGE_NOT_MODIFIED_TEXT);
+};
+
 const normalizePrivateKey = () => {
     const raw = String(process.env.PRIVATE_KEY || '').trim();
     if (!/^(0x)?[0-9a-fA-F]{64}$/.test(raw)) return null;
@@ -151,6 +218,93 @@ const normalizePrivateKey = () => {
 };
 
 const isEthereumAddress = (value) => ETH_ADDRESS_REGEX.test(String(value || '').trim());
+
+const getStatusRpcCandidates = () => {
+    const configuredPrimary = String(process.env.RPC_URL || '').trim();
+    const candidates = [
+        configuredPrimary || DEFAULT_RPC_URL,
+        ...parseCsvValues(process.env.RPC_FALLBACK_URLS)
+    ].filter(Boolean);
+    return [...new Set(candidates)];
+};
+
+const probeTelegramOrigin = async (origin) => {
+    const startedAt = Date.now();
+    try {
+        const result = await apiCallAtOrigin(origin, 'getMe');
+        const latencyMs = Date.now() - startedAt;
+        if (result?.ok) {
+            return { origin, ok: true, latencyMs, username: result?.result?.username || null };
+        }
+        return {
+            origin,
+            ok: false,
+            latencyMs,
+            error: formatHealthError(result?.description || result?.error || `HTTP ${result?._httpStatus || 'unknown'}`)
+        };
+    } catch (error) {
+        return {
+            origin,
+            ok: false,
+            latencyMs: Date.now() - startedAt,
+            error: formatHealthError(error?.message)
+        };
+    }
+};
+
+const probeRpcEndpoint = async (rpcUrl, viemFactory) => {
+    const startedAt = Date.now();
+    try {
+        const client = viemFactory.createPublicClient({
+            chain: viemFactory.base,
+            transport: viemFactory.http(rpcUrl, {
+                timeout: RPC_HEALTH_TIMEOUT_MS,
+                retryCount: 0
+            })
+        });
+        const blockNumber = await client.getBlockNumber();
+        return {
+            rpcUrl,
+            ok: true,
+            latencyMs: Date.now() - startedAt,
+            blockNumber: blockNumber.toString()
+        };
+    } catch (error) {
+        return {
+            rpcUrl,
+            ok: false,
+            latencyMs: Date.now() - startedAt,
+            error: formatHealthError(error?.message)
+        };
+    }
+};
+
+const createHealthyStatusClient = async () => {
+    const { createPublicClient, http } = await import('viem');
+    const { base } = await import('viem/chains');
+    const rpcCandidates = getStatusRpcCandidates();
+    let lastError = null;
+
+    for (const rpcUrl of rpcCandidates) {
+        try {
+            const client = createPublicClient({
+                chain: base,
+                transport: http(rpcUrl, {
+                    timeout: 10000,
+                    retryCount: 1,
+                    retryDelay: 500
+                })
+            });
+            await client.getBlockNumber();
+            return { client, rpcUrl };
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    const detail = lastError?.message ? `: ${lastError.message}` : '';
+    throw new Error(`No healthy RPC endpoint available (${rpcCandidates.join(', ')})${detail}`);
+};
 
 const sendMessage = async (chatId, text, options = {}) => {
     const safeText = truncateForTelegram(text);
@@ -219,25 +373,35 @@ const editMessage = async (chatId, messageId, text) => {
         if (result?.ok !== false) {
             return result;
         }
+        if (isMessageNotModified(result)) {
+            return { ...result, ok: true };
+        }
         if (!isMarkdownParseError(result)) {
             console.warn(`Telegram editMessageText failed: ${result?.description || 'unknown error'}`);
-            return result;
         }
     } catch (e) {
         console.warn(`Telegram editMessageText request error: ${e.message}`);
     }
 
-    const plainEdit = await apiCall('editMessageText', {
-        chat_id: chatId,
-        message_id: messageId,
-        text: stripMarkdown(safeText)
-    });
+    try {
+        const plainEdit = await apiCall('editMessageText', {
+            chat_id: chatId,
+            message_id: messageId,
+            text: stripMarkdown(safeText)
+        });
 
-    if (plainEdit?.ok === false) {
+        if (plainEdit?.ok === false) {
+            if (isMessageNotModified(plainEdit)) {
+                return { ...plainEdit, ok: true };
+            }
+            return await sendMessage(chatId, safeText);
+        }
+
+        return plainEdit;
+    } catch (e) {
+        console.warn(`Telegram plain editMessageText failed: ${e.message}`);
         return await sendMessage(chatId, safeText);
     }
-
-    return plainEdit;
 };
 
 const sendButtons = async (chatId, text, buttons) => {
@@ -363,6 +527,7 @@ Or paste IPFS CID: \`bafkrei...\`
 \`/go\` - Fast deploy
 \`/deploy\` - Wizard mode
 \`/status\` - Wallet info
+\`/health\` - Full system check
 \`/config\` - View config
 \`/spoof\` - Set stealth address
 \`/cancel\` - Reset session
@@ -378,16 +543,16 @@ const handleStatus = async (chatId) => {
             return await sendMessage(chatId, `❌ ${pkCheck.error}`);
         }
 
-        const { createPublicClient, http, formatEther } = await import('viem');
-        const { base } = await import('viem/chains');
+        const { formatEther } = await import('viem');
         const { privateKeyToAccount } = await import('viem/accounts');
 
         const cleanKey = normalizePrivateKey();
         if (!cleanKey) {
             return await sendMessage(chatId, '❌ PRIVATE_KEY invalid');
         }
+
+        const { client, rpcUrl } = await createHealthyStatusClient();
         const account = privateKeyToAccount(cleanKey);
-        const client = createPublicClient({ chain: base, transport: http() });
         const balance = await client.getBalance({ address: account.address });
         const eth = parseFloat(formatEther(balance));
 
@@ -401,10 +566,75 @@ const handleStatus = async (chatId) => {
 📍 Address: \`${account.address}\`
 ${balanceEmoji} Balance: *${eth.toFixed(4)} ETH*
 🔗 Network: Base Mainnet
+🌐 RPC: \`${rpcUrl}\`
 ${balanceWarning}
         `.trim());
     } catch (error) {
         await sendMessage(chatId, `❌ Error: ${error.message}`);
+    }
+};
+
+const handleHealth = async (chatId) => {
+    await sendTyping(chatId);
+
+    const progress = await sendMessage(chatId, '🩺 Running deep health check...\nChecking Telegram API, RPC, wallet, and IPFS.');
+
+    try {
+        const pkCheck = validatePrivateKey();
+        const ipfsStatus = getProviderStatus();
+        const rpcCandidates = getStatusRpcCandidates();
+
+        const [{ createPublicClient, http }, { base }] = await Promise.all([
+            import('viem'),
+            import('viem/chains')
+        ]);
+
+        const viemFactory = { createPublicClient, http, base };
+
+        const [telegramChecks, rpcChecks] = await Promise.all([
+            Promise.all(TELEGRAM_API_ORIGINS.map(origin => probeTelegramOrigin(origin))),
+            Promise.all(rpcCandidates.map(rpcUrl => probeRpcEndpoint(rpcUrl, viemFactory)))
+        ]);
+
+        const activeTelegramOrigin = TELEGRAM_API_ORIGINS[activeTelegramOriginIndex] || TELEGRAM_API_ORIGINS[0];
+        const healthyRpc = rpcChecks.find(item => item.ok);
+        const ipfsProviders = [];
+        if (ipfsStatus.nftStorage) ipfsProviders.push('NFT.Storage');
+        if (ipfsStatus.pinata) ipfsProviders.push('Pinata');
+        if (ipfsStatus.infura) ipfsProviders.push('Infura');
+
+        const telegramLines = telegramChecks.map(item => item.ok
+            ? `• ✅ \`${item.origin}\` (${item.latencyMs}ms)`
+            : `• ❌ \`${item.origin}\` (${item.latencyMs}ms) _${item.error}_`);
+
+        const rpcLines = rpcChecks.map(item => item.ok
+            ? `• ✅ \`${item.rpcUrl}\` (${item.latencyMs}ms, block ${item.blockNumber})`
+            : `• ❌ \`${item.rpcUrl}\` (${item.latencyMs}ms) _${item.error}_`);
+
+        const summary = [
+            `🔐 Wallet: ${pkCheck.valid ? '✅ Ready' : `❌ ${pkCheck.error}`}`,
+            `📦 IPFS: ${ipfsStatus.any ? `✅ ${ipfsProviders.join(', ')}` : '⚠️ Not configured'}`,
+            `🌐 Active Telegram Origin: \`${activeTelegramOrigin}\``,
+            `🔗 Preferred RPC: ${healthyRpc ? `\`${healthyRpc.rpcUrl}\`` : '_No healthy RPC_'}`,
+            `📍 Session Cache: ${sessionManager.count()} active chat(s)`
+        ].join('\n');
+
+        const resultMessage = `
+🩺 *System Health*
+━━━━━━━━━━━━━━━━━━━━━
+
+${summary}
+
+*Telegram Origins*
+${telegramLines.join('\n')}
+
+*RPC Endpoints*
+${rpcLines.join('\n')}
+        `.trim();
+
+        await editMessage(chatId, progress?.result?.message_id, resultMessage);
+    } catch (error) {
+        await editMessage(chatId, progress?.result?.message_id, `❌ *Health check failed:* ${formatHealthError(error.message)}`);
     }
 };
 
@@ -674,7 +904,7 @@ Send image + context link to continue.
     }
 };
 
-const processPhoto = async (chatId, photo, session) => {
+const processPhoto = async (chatId, photo, session, preResolvedFileUrl = null) => {
     await sendTyping(chatId);
 
     // Check IPFS config
@@ -695,15 +925,23 @@ Or paste an existing IPFS CID.
     const statusMsg = await sendMessage(chatId, '📤 Uploading to IPFS...');
 
     // Get file URL
-    const file = photo[photo.length - 1];
-    const fileUrl = await getFile(file.file_id);
+    const file = photo?.[photo.length - 1];
+    if (!file?.file_id) {
+        return await editMessage(chatId, statusMsg?.result?.message_id, '❌ Invalid image payload. Try sending the image again.');
+    }
+    const fileUrl = preResolvedFileUrl || await getFile(file.file_id);
 
     if (!fileUrl) {
         return await editMessage(chatId, statusMsg?.result?.message_id, '❌ Could not download image. Try again.');
     }
 
     // Upload to IPFS
-    const result = await processImageInput(fileUrl);
+    let result;
+    try {
+        result = await processImageInput(fileUrl);
+    } catch (error) {
+        return await editMessage(chatId, statusMsg?.result?.message_id, `❌ Upload error: ${error.message}`);
+    }
 
     if (!result.success) {
         return await editMessage(chatId, statusMsg?.result?.message_id, `❌ Upload failed: ${result.error}`);
@@ -890,6 +1128,7 @@ const handleUpdate = async (update) => {
             case '/start': return handleStart(chatId, username);
             case '/help': return handleHelp(chatId);
             case '/status': return handleStatus(chatId);
+            case '/health': return handleHealth(chatId);
             case '/config': return handleConfig(chatId);
             case '/deploy': return handleDeploy(chatId);
             case '/cancel': return handleCancel(chatId);
@@ -913,11 +1152,16 @@ const handleUpdate = async (update) => {
     }
 
     // Handle documents (images as files)
-    if (message.document?.mime_type?.startsWith('image/')) {
+    const isImageDocument = !!message.document && (
+        message.document?.mime_type?.startsWith('image/')
+        || /\.(png|jpe?g|gif|webp|svg)$/i.test(String(message.document?.file_name || ''))
+    );
+    if (isImageDocument) {
         const fileUrl = await getFile(message.document.file_id);
         if (fileUrl) {
-            return processPhoto(chatId, [{ file_id: message.document.file_id }], session);
+            return processPhoto(chatId, [{ file_id: message.document.file_id }], session, fileUrl);
         }
+        return sendMessage(chatId, '❌ Could not download image file from Telegram. Try sending as photo.');
     }
 };
 
@@ -1021,6 +1265,19 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason, promise) => {
     console.error('⚠️ Unhandled Rejection:', reason);
 });
+
+const shutdown = (signal) => {
+    console.log(`\n🛑 Received ${signal}. Shutting down gracefully...`);
+    try {
+        TELEGRAM_HTTP_AGENT.destroy();
+    } catch (e) {
+        // Ignore shutdown cleanup errors
+    }
+    process.exit(0);
+};
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 // Start Main
 main().catch(err => {

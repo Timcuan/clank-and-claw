@@ -30,8 +30,8 @@ If you get stuck or the bot doesn't understand, it will:
 - `/deploy` - Start the deployment wizard
 - `/go SYMBOL "Name" 10%` - Quick deploy in one line
 - `/spoof 0x...` - Enable spoofing for the active session
+- `/health` - Deep health check for Telegram and RPC endpoints
 - `/cancel` - Reset critical session data
-- `/reset` - Completely wipe session and start over
 
 ### Smart Input
  Paste *any* text containing links and the bot will sort them:

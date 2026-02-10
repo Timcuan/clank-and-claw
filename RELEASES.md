@@ -1,13 +1,62 @@
+# 🚀 Release Notes - Clank & Claw v2.7.0 (Smart Logic + Documentation Refresh)
+
+### 🧠 Smart Deployment Runtime
+- **Auto-Heal First Policy**: Deployment no longer fails for common user input gaps (fees too high, missing description, incomplete socials, malformed rewards).
+- **Context Continuity Upgrade**: If context is missing, runtime now uses `DEFAULT_CONTEXT_ID` or synthetic context fallback so deploy flow can continue.
+- **Strict Mode Auto-Relax**: Incomplete strict-mode requirements now downgrade to standard mode instead of hard-failing.
+- **Preflight Observability**: CLI preflight includes smart-fix count and sample fixes before deploy.
+
+### 🗂️ Repository Cleanup & Docs
+- **Documentation Overhaul**: README rewritten to be cleaner, production-focused, and easier to onboard.
+- **New Visual Architecture Doc**: Added `docs/SYSTEM_ARCHITECTURE.md` with Mermaid component and sequence diagrams.
+- **Config Baseline Sync**: `SMART_VALIDATION` and `DEFAULT_IMAGE_URL` are now documented and propagated in setup/templates.
+
+---
+*Date: February 10, 2026*
+
+---
+
+# 🚀 Release Notes - Clank & Claw v2.6.8 (Vanity & Metadata Hardening)
+
+### 🎯 Deployment Reliability
+- **Vanity Parsing Hardening**: Boolean parsing now handles quoted/env variants (`"true"`, `1`, `yes`, etc.) to prevent accidental vanity misconfiguration.
+- **Preflight Summary**: CLI now prints preflight status (vanity, context source, social count, spoof split, metadata length) before deploy.
+- **Context Guardrail**: Added `REQUIRE_CONTEXT=true` option to fail fast when context is missing.
+- **Smart Logic Auto-Heal**: Validator now auto-normalizes missing/invalid fields (name, symbol, image, socials, rewards, context) so deploy flow keeps moving.
+
+### 🧠 Smart Deployment Logic
+- **No Hard Fail for Common Input Gaps**: High fees are capped to protocol-safe values, invalid socials are normalized/dropped, and broken rewards are auto-rebalanced.
+- **Context Continuity**: When context is missing, system now auto-fills from `DEFAULT_CONTEXT_ID` or synthetic fallback to preserve indexing pipeline continuity.
+- **Strict Mode Auto-Relax**: If strict requirements are incomplete, strict mode is downgraded to standard instead of aborting deployment.
+- **Smart Fix Visibility**: Preflight now reports auto-fix count and sample fixes.
+
+### 🧩 Metadata & Context Robustness
+- **Social Normalization**: Social metadata now normalizes common URL formats (including bare domains and `@handle` for X).
+- **Context Resolution Source Tracking**: Config now tracks whether context came from explicit input, socials, or `DEFAULT_CONTEXT_ID` fallback.
+- **Session Metadata Fix**: Bot session configs now reliably populate `metadata.description`.
+
+### 🔌 Multi-Mode Consistency
+- **OpenClaw Mapping Extended**: Added `rpcFallbackUrls`, spoof block mapping, and legacy reward admin fields for env-mode parity.
+- **Env Templates Updated**: Added `VANITY` and `REQUIRE_CONTEXT` to VPS template and setup output defaults.
+
+---
+*Date: February 10, 2026*
+
+---
+
 # 🚀 Release Notes - Clank & Claw v2.6.7 (Ops Healthcheck Patch)
 
 ### 🩺 Runtime Diagnostics
 - **`/health` Command**: Added deep runtime check for all configured Telegram API origins and RPC endpoints.
 - **Latency Visibility**: Health output now includes per-endpoint response time and latest RPC block number.
 - **Operational Summary**: Health report shows wallet key readiness, IPFS provider status, active Telegram origin, preferred RPC, and active session count.
+- **Spoof Toggle UX**: Added `/spoof off` to disable spoofing without resetting the whole session.
 
 ### 🧰 VPS Operations
 - **VPS Env Template**: Added `.env.vps.example` with recommended multi-RPC and Telegram failover fields.
+- **VPS Setup Template Fallback**: `vps-setup.sh` now prefers `.env.vps.example`, falls back to `.env.example`, and safely creates empty `.env` if neither exists.
 - **Docs Sync**: Updated README and token guide with `/health` usage and template-driven VPS setup.
+- **Config Hygiene**: Setup wizard no longer writes unused `DEFAULT_FEES`/`DEFAULT_PLATFORM`; switched to `DEFAULT_CONTEXT_ID` + active env keys.
 
 ---
 *Date: February 10, 2026*

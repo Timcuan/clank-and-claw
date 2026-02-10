@@ -35,6 +35,26 @@ const parseArgs = () => {
     return options;
 };
 
+const printPreflight = (config) => {
+    const socialCount = Array.isArray(config?.metadata?.socialMediaUrls) ? config.metadata.socialMediaUrls.length : 0;
+    const hasSpoofSplit = Array.isArray(config?.rewards?.recipients) && config.rewards.recipients.length > 1;
+    const contextSource = config?._meta?.contextSource || 'unknown';
+    const contextStatus = config?.context?.messageId ? `${config.context.platform}:${config.context.messageId}` : 'missing';
+    const autoFixes = Array.isArray(config?._meta?.autoFixes) ? config._meta.autoFixes : [];
+
+    console.log('🧪 Preflight Checks');
+    console.log(`   Vanity: ${config?.vanity ? 'enabled' : 'disabled'}`);
+    console.log(`   Context: ${contextStatus} (source: ${contextSource})`);
+    console.log(`   Socials: ${socialCount}`);
+    console.log(`   Metadata desc length: ${String(config?.metadata?.description || '').length}`);
+    console.log(`   Spoof split: ${hasSpoofSplit ? 'enabled' : 'disabled'}`);
+    console.log(`   Smart fixes: ${autoFixes.length}`);
+    if (autoFixes.length > 0) {
+        const sample = autoFixes.slice(0, 3).join(' | ');
+        console.log(`   Smart fix sample: ${sample}`);
+    }
+};
+
 async function main() {
     console.log('\n🤖 \x1b[36mClank & Claw Deployment Agent\x1b[0m');
     console.log('════════════════════════════════════');
@@ -71,7 +91,6 @@ async function main() {
         // 3. Apply Overrides (Force Patching)
         if (opts.spoof) {
             console.log(`🎭 \x1b[35mSpoofing Override:\x1b[0m ${opts.spoof}`);
-            const { createPublicClient, http } = await import('viem');
             const { privateKeyToAccount } = await import('viem/accounts');
 
             // Re-calculate rewards for spoofing
@@ -110,6 +129,7 @@ async function main() {
         // 4. Validation
         console.log('🔍 Validating configuration...');
         config = validateConfig(config);
+        printPreflight(config);
 
         // 5. Execution
         console.log(`\n🚀 \x1b[36mDeploying ${config.name} (${config.symbol})...\x1b[0m`);

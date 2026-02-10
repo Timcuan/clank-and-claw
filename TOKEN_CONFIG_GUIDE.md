@@ -30,6 +30,7 @@ If you get stuck or the bot doesn't understand, it will:
 - `/deploy` - Start the deployment wizard
 - `/go SYMBOL "Name" 10%` - Quick deploy in one line
 - `/spoof 0x...` - Enable spoofing for the active session
+- `/spoof off` - Disable spoofing for the active session
 - `/health` - Deep health check for Telegram and RPC endpoints
 - `/cancel` - Reset critical session data
 
@@ -178,6 +179,10 @@ If no fees are provided, the system defaults to:
 ## Validation
 
 Run `npm run test` to validate your config without deploying.
+
+Recommended env guardrail:
+- `SMART_VALIDATION=true` to auto-heal missing/invalid fields (recommended for bot/agent workflows).
+- `REQUIRE_CONTEXT=true` + `DEFAULT_CONTEXT_ID=<id>` for consistent indexing fallback.
 
 ## Common Mistakes
 

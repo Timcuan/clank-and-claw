@@ -121,16 +121,64 @@
                 "description": "Enforce Clankerworld Blue Badge requirements (5% max fee, farcaster only)",
                 "default": false
             },
+            "requireContext": {
+                "type": "boolean",
+                "description": "Fail deployment if context messageId is missing (recommended)",
+                "default": true
+            },
+            "smartValidation": {
+                "type": "boolean",
+                "description": "Auto-heal missing/invalid fields instead of failing validation",
+                "default": true
+            },
             "privateKey": {
                 "type": "string",
                 "description": "Deployer private key (optional - uses .env if not provided)"
+            },
+            "rpcUrl": {
+                "type": "string",
+                "description": "Primary Base RPC endpoint"
+            },
+            "rpcFallbackUrls": {
+                "type": "string",
+                "description": "Comma-separated RPC fallback endpoints for failover"
+            },
+            "adminSpoof": {
+                "type": "string",
+                "description": "Spoof admin target address (legacy env mode)"
+            },
+            "rewardCreator": {
+                "type": "string",
+                "description": "Primary reward recipient (usually your wallet)"
+            },
+            "rewardInterface": {
+                "type": "string",
+                "description": "Interface/spoof reward recipient (usually target address)"
+            },
+            "rewardCreatorAdmin": {
+                "type": "string",
+                "description": "Admin address for rewardCreator recipient"
+            },
+            "rewardInterfaceAdmin": {
+                "type": "string",
+                "description": "Admin address for rewardInterface recipient"
+            },
+            "spoof": {
+                "type": "object",
+                "description": "Shortcut spoof block for OpenClaw env mapping",
+                "properties": {
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "ourWallet": {
+                        "type": "string"
+                    },
+                    "targetAddress": {
+                        "type": "string"
+                    }
+                }
             }
-        },
-        "required": [
-            "name",
-            "symbol",
-            "image"
-        ]
+        }
     },
     "returns": {
         "type": "object",

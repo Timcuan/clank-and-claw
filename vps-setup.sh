@@ -79,7 +79,14 @@ npm install --omit=dev
 # ─────────────────────────────────────────
 if [ ! -f ".env" ]; then
     echo "📝 Creating .env from template..."
-    cp .env.example .env
+    if [ -f ".env.vps.example" ]; then
+        cp .env.vps.example .env
+    elif [ -f ".env.example" ]; then
+        cp .env.example .env
+    else
+        touch .env
+        echo "⚠️  No .env template found. Created empty .env"
+    fi
     echo ""
     echo "⚠️  IMPORTANT: Edit .env with your PRIVATE_KEY before deploying!"
     echo "   nano .env"
@@ -160,7 +167,7 @@ check "Gateway pinata" "curl -fsS --max-time 8 https://gateway.pinata.cloud/ipfs
 
 echo ""
 echo "Tips:"
-echo "- Verify .env: RPC_URL / RPC_FALLBACK_URLS / TELEGRAM_API_BASES / IPFS_GATEWAYS"
+echo "- Verify .env: RPC_URL / RPC_FALLBACK_URLS / TELEGRAM_API_BASES / IPFS_GATEWAYS / REQUIRE_CONTEXT / SMART_VALIDATION"
 echo "- If DNS unstable: sudo systemctl restart systemd-resolved"
 echo "- Use PM2 logs: pm2 logs clanker-bot"
 EOF

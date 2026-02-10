@@ -1,177 +1,152 @@
+# Clank & Claw v2.7.0
 
-# 🐾 Clank & Claw v2.6.5 (Agency Grade)
+Production-grade token deployment suite for Base using Clanker SDK.
 
-**The Ultimate Agentic Token Deployment Suite for Base**
+Deploy from:
+- Telegram bot (`telegram-bot.js`)
+- CLI (`deploy.js`)
+- OpenClaw handler (`openclaw-handler.js`)
 
-Deploy High-Performance ERC-20 tokens via **Telegram Bot** (with premium UI/UX) or **CLI**. Built for speed, reliability, and scale.
+All paths use one shared smart validation pipeline so deployment can continue even when user input is incomplete.
 
-![Clanker](https://img.shields.io/badge/Clanker_SDK-v4.2.0-blue)
-![Status](https://img.shields.io/badge/Status-Production_Ready-green)
-![License](https://img.shields.io/badge/License-MIT-purple)
+## Why This System
 
----
+- Smart auto-heal for messy input (fees/context/image/social/rewards)
+- RPC + gateway failover for unstable VPS/network conditions
+- Consistent preflight output before on-chain execution
+- Session-safe Telegram workflow for multi-user operation
 
-## ✨ Key Features (v2.6.5)
+## Visual Overview
 
-### 🤖 Premium Telegram Agent
-- **Dashboard UI**: Real-time deployment status, wallet balance, and storage health.
-- **Smart Parsing**: Context-aware input handling. Paste a tweet link, upload an image, or type natural language commands freely.
-- **Concurrency Safe**: Multi-user support with isolated session management. No cross-pollution of configs.
-- **Rapid Fire Mode**: `/go PEPE "Pepe Token" 2%` for instant setup.
-- **Spoofing & Stealth**: Advanced routing for deployment anonymity.
+```mermaid
+flowchart LR
+    U[User / Operator] --> TG[Telegram Bot]
+    U --> CLI[CLI]
+    U --> OC[OpenClaw]
 
-### 🛠️ Robust Core
-- **Dual Mode**: Works as a standalone CLI or a persistent Bot.
-- **Multi-Provider IPFS**: Fallback support for Pinata, NFT.Storage, and Infura.
-- **Gas Optimized**: Smart gas estimation for faster inclusion on Base.
-- **Strict Validation**: Pre-flight checks for keys, fees, and metadata.
+    TG --> CFG[Config Builder]
+    CLI --> CFG
+    OC --> CFG
 
----
+    CFG --> VAL[Smart Validator]
+    VAL --> CORE[Deploy Engine]
 
-## 🚀 Quick Start
+    CORE --> RPC1[Primary RPC]
+    CORE --> RPCN[Fallback RPCs]
+    CORE --> CLK[Clanker SDK]
+    CORE --> BS[Basescan]
+```
 
-### 1. Installation
+Detailed system documentation and sequence diagrams: `docs/SYSTEM_ARCHITECTURE.md`
+
+## Smart Logic (Default ON)
+
+`SMART_VALIDATION=true` enables auto-heal behavior:
+
+- High fees (e.g. `20%`) are auto-capped to protocol-safe max (`5%` total)
+- Missing image gets fallback from `DEFAULT_IMAGE_URL` (or default CID gateway)
+- Missing context gets fallback from `DEFAULT_CONTEXT_ID`; if absent, synthetic context is generated
+- Invalid social links are normalized or dropped
+- Invalid reward split is rebalanced to `10000 bps`
+- Invalid strict-mode input is auto-relaxed to standard mode (deploy continues)
+
+Preflight now shows how many smart fixes were applied.
+
+## Quick Start
+
+### 1) Install
+
 ```bash
 git clone https://github.com/Timcuan/clank-and-claw.git
 cd clank-and-claw
 npm install
 ```
 
-### 2. Configuration
-Run the interactive setup wizard:
-```bash
-npm run setup
-```
-*Follow the prompts to configure your Wallet (Private Key), RPC, and IPFS keys.*
+### 2) Configure
 
-For VPS/manual setup, use the template:
 ```bash
 cp .env.vps.example .env
+npm run setup
 ```
 
-### 3. Usage
+### 3) Run
 
-#### 🤖 Run the Telegram Bot
+Telegram bot:
 ```bash
 npm run start
 ```
-*Or specifically:* `node telegram-bot.js`
 
-**Bot Commands:**
-| Command | Description |
-|---------|-------------|
-| `/deploy` | Start the interactive wizard |
-| `/go <SYMBOL> "<NAME>" <FEES>` | Rapid deployment (skip steps) |
-| `/spoof <ADDRESS>` | Enable stealth spoofing to target address |
-| `/status` | Check wallet balance & storage providers |
-| `/health` | Deep health check (Telegram origins + RPC endpoints) |
-| `/cancel` | Abort current operation |
-
-#### 💻 Run via CLI
-Edit `token.json` then run:
+CLI (from `token.json`):
 ```bash
 npm run deploy
 ```
 
----
-
-## 🧠 Smart Capabilities
-
-### Context Awareness
-The bot understands context links (Tweets, Casts) and Social links (Telegram, Website) instantly.
-- **Just paste a tweet:** The bot attaches it as deployment context.
-- **Paste a website:** The bot adds it to metadata.
-- **Upload an image:** The bot uploads to IPFS automatically.
-
-### Concurrency Safety
-Uses a session-based architecture where every user's configuration is isolated in memory.
-- **No Global State Pollution**: `process.env` is never modified during bot runtime.
-- **Thread Locking**: Prevents accidental double-deployments via `isDeploying` locks.
-
----
-
-## 🌐 Network Resilience (VPS)
-
-For unstable VPS providers or intermittent gateway failures, configure fallback endpoints in `.env`:
-
+Dry-run test:
 ```bash
-RPC_URL=https://mainnet.base.org
-RPC_FALLBACK_URLS=https://base-mainnet.g.alchemy.com/v2/<KEY>,https://base.publicnode.com,https://base.llamarpc.com
-
-TELEGRAM_API_BASES=https://api.telegram.org,https://tg-api-1.example.com,https://tg-api-2.example.com
-# Optional file endpoint override
-TELEGRAM_FILE_BASE=
-
-IPFS_GATEWAYS=https://gateway.pinata.cloud/ipfs/{cid},https://nftstorage.link/ipfs/{cid},https://cloudflare-ipfs.com/ipfs/{cid}
+npm test
 ```
-
-What this gives you:
-- **RPC Failover**: Deploy path probes configured RPC endpoints and auto-picks a healthy one.
-- **Receipt Recovery**: If primary RPC times out after TX submission, the bot checks fallback RPCs for receipt recovery.
-- **Status RPC Alignment**: `/status` now uses the same RPC fallback strategy so health readouts match real deploy behavior.
-- **Telegram Gateway Failover**: Bot can rotate across configured Telegram API bases.
-- **Safer Telegram Retry Policy**: Unknown 4xx gateway/proxy errors are treated as retryable, while known Telegram permanent errors are not retried.
-- **Live Health Command**: `/health` checks every configured Telegram and RPC endpoint, including response latency.
-- **IPFS Gateway Redundancy**: Upload result now returns multiple gateway URLs.
 
 Hardening test suite:
 ```bash
 npm run test:hardening
 ```
 
----
+## Telegram Commands
 
-## 📁 Project Structure
+- `/deploy` start guided wizard
+- `/go <SYMBOL> "<NAME>" <FEES>` fast setup
+- `/spoof <ADDRESS>` enable stealth split
+- `/spoof off` disable spoofing
+- `/status` runtime status
+- `/health` deep health checks (Telegram origins + RPC endpoints)
+- `/cancel` reset current session
 
+## VPS / Production Baseline
+
+Recommended `.env` baseline:
+
+```env
+RPC_URL=https://mainnet.base.org
+RPC_FALLBACK_URLS=https://base-mainnet.g.alchemy.com/v2/<KEY>,https://base.publicnode.com,https://base.llamarpc.com
+
+TELEGRAM_API_BASES=https://api.telegram.org
+IPFS_GATEWAYS=https://gateway.pinata.cloud/ipfs/{cid},https://nftstorage.link/ipfs/{cid},https://cloudflare-ipfs.com/ipfs/{cid}
+
+SMART_VALIDATION=true
+VANITY=true
+REQUIRE_CONTEXT=true
+DEFAULT_CONTEXT_ID=<valid_post_or_cast_id>
+DEFAULT_IMAGE_URL=
 ```
+
+## Project Map
+
+```text
 clank-and-claw/
-├── telegram-bot.js      # 🤖 Main Bot Logic (Premium UX)
-├── clanker-core.js      # ⚙️ Core Deployment Engine
-├── deploy.js            # 💻 CLI Entry Point
+├── telegram-bot.js
+├── deploy.js
+├── openclaw-handler.js
+├── clanker-core.js
 ├── lib/
-│   ├── config.js        # 📝 Config Builders (Safe & Legacy)
-│   ├── session-manager.js # 🧠 State Management
-│   ├── parser.js        # 🔍 Input Analysis
-│   ├── validator.js     # 🛡️ Safety Checks
-│   └── utils.js         # 🛠️ Helpers
-└── token.json           # 📄 Template for CLI 
+│   ├── config.js
+│   ├── validator.js
+│   ├── parser.js
+│   ├── social-parser.js
+│   ├── ipfs.js
+│   ├── telegram-network.js
+│   └── session-manager.js
+├── docs/
+│   └── SYSTEM_ARCHITECTURE.md
+├── test/
+└── token.json
 ```
 
----
+## Operational Notes
 
-## 🛡️ Security
+- If deployment tx is sent but primary RPC times out, receipt recovery automatically checks fallback RPCs.
+- `DRY_RUN=true` validates and simulates deployment without spending gas.
+- For maximum Clankerworld consistency, set `DEFAULT_CONTEXT_ID` to a valid tweet/cast ID.
 
-- **Private Keys**: Handled only in memory or read from `.env` (never logged).
-- **Strict Mode**: Validation prevents invalid fee structures or missing data.
-- **Auto-Cleanup**: Stale sessions are purged automatically after 15 minutes.
+## Release Notes
 
----
-
----
-
-## 🏗️ Production Setup (Server)
-
-To ensure the bot runs 24/7 with auto-restart capabilities, use **PM2**.
-
-1. **Install PM2 globally:**
-   ```bash
-   npm install pm2 -g
-   ```
-
-2. **Start the Bot:**
-   ```bash
-   pm2 start ecosystem.config.cjs
-   ```
-   *This starts the bot in background mode with auto-restart on crash and memory leak protection.*
-
-3. **Monitor:**
-   ```bash
-   pm2 list      # Check status
-   pm2 logs      # View live logs
-   pm2 monit     # Dashboard
-   ```
-
-4. **Network Diagnostics (VPS helper):**
-   ```bash
-   ~/claw-netcheck.sh
-   ```
+See `RELEASES.md` for version history and patch details.

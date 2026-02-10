@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 🤖 Clank & Claw Telegram Bot v2.5
+ * 🤖 Clank & Claw Telegram Bot v2.7.0
  * 
  * Agentic Token Deployment Machine
  * 
@@ -40,6 +40,7 @@ const DEFAULT_RPC_URL = 'https://mainnet.base.org';
 const MESSAGE_NOT_MODIFIED_TEXT = 'message is not modified';
 const TELEGRAM_HEALTH_TIMEOUT_MS = 12000;
 const RPC_HEALTH_TIMEOUT_MS = 10000;
+const SPOOF_DISABLE_KEYWORDS = new Set(['off', 'disable', 'none', 'clear', 'reset']);
 const TELEGRAM_HTTP_AGENT = new https.Agent({
     keepAlive: true,
     maxSockets: 50,
@@ -443,14 +444,14 @@ const validatePrivateKey = () => {
 
 const getReadyStatus = (token) => {
     const missing = [];
-    if (!token.name) missing.push('name');
-    if (!token.symbol) missing.push('symbol');
-    if (!token.image) missing.push('image');
-    if (!token.context?.messageId) missing.push('context');
+    if (!token.name && !token.symbol) {
+        missing.push('name_or_symbol');
+    }
     return {
         ready: missing.length === 0,
         missing,
-        hasContext: !!token.context?.messageId
+        hasContext: !!token.context?.messageId,
+        hasImage: !!token.image
     };
 };
 
@@ -467,7 +468,7 @@ const handleStart = async (chatId, username) => {
     const storageStatus = providers.any ? '✅ Active' : '⚠️ Limited';
 
     await sendMessage(chatId, `
-🤖 *System Online: Clank & Claw v2.6.5*
+🤖 *System Online: Clank & Claw v2.7.0*
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 👤 *Operator:* @${username || 'Agent'}
@@ -506,8 +507,8 @@ Just type: _"Launch PEPE (Pepe Token) 5%"_
 Bot auto-detects name, symbol, fees!
 
 *🎭 Spoofing Mode:*
-\`/spoof 0xRecipientAddress\`
-Rewards go to stealth wallet.
+\`/spoof 0xRecipientAddress\` or \`/spoof off\`
+Rewards go to stealth wallet (or reset ke default).
 
 *💰 Fee Formats:*
 \`10%\` → 5%+5% split
@@ -650,7 +651,7 @@ const handleConfig = async (chatId) => {
 ${t.name ? `✅ Name: *${t.name}*` : '⬜ Name: _not set_'}
 ${t.symbol ? `✅ Symbol: *${t.symbol}*` : '⬜ Symbol: _not set_'}
 ${t.image ? `✅ Image: \`${t.image.substring(0, 20)}...\`` : '⬜ Image: _not set_'}
-${t.context ? `✅ Context: *${t.context.platform}*` : '⬜ Context: _optional_'}
+${t.context?.messageId ? `✅ Context: *${t.context.platform}*` : '⬜ Context: _auto fallback_'}
 💰 Fees: *${(t.fees.clankerFee + t.fees.pairedFee) / 100}%*
 ${t.spoofTo ? `🎭 Spoof: \`${t.spoofTo.substring(0, 10)}...\`` : ''}
 
@@ -662,6 +663,22 @@ const handleSpoof = async (chatId, address) => {
     const session = getSession(chatId);
     const target = String(address || '').trim();
 
+    if (!target || SPOOF_DISABLE_KEYWORDS.has(target.toLowerCase())) {
+        if (!session.token.spoofTo) {
+            return await sendMessage(chatId, '🎭 Spoofing sudah nonaktif.');
+        }
+
+        session.token.spoofTo = null;
+        return await sendMessage(chatId, `
+🎭 *Stealth Mode Deactivated*
+
+Rewards kembali ke wallet deployer default.
+
+Untuk aktifkan lagi:
+\`/spoof 0xYourStealthAddress\`
+        `.trim());
+    }
+
     if (!isEthereumAddress(target)) {
         return await sendMessage(chatId, `
 🎭 *Spoofing Mode*
@@ -670,6 +687,7 @@ const handleSpoof = async (chatId, address) => {
 Redirect all rewards to a stealth wallet.
 
 *Usage:* \`/spoof 0xYourStealthAddress\`
+*Disable:* \`/spoof off\`
 
 Current: ${session.token.spoofTo ? `\`${session.token.spoofTo}\`` : '_None_'}
         `.trim());
@@ -682,7 +700,7 @@ Current: ${session.token.spoofTo ? `\`${session.token.spoofTo}\`` : '_None_'}
 All rewards will be sent to:
 \`${target}\`
 
-This address will NOT appear as token admin.
+This address will appear as token admin on-chain.
     `.trim());
 };
 
@@ -740,8 +758,8 @@ ${session.token.context ? `🔗 Context: ${session.token.context.platform}` : ''
 ${session.token.spoofTo ? `🎭 Spoof: Active` : ''}
 
 *Next Steps:*
-${!session.token.image ? '1️⃣ Send token *image*' : ''}
-${!session.token.context ? '2️⃣ Send *tweet/cast link*' : ''}
+${!session.token.image ? '1️⃣ (Opsional) Send token *image*' : ''}
+${!session.token.context ? '2️⃣ (Disarankan) Send *tweet/cast link*' : ''}
 ${status.ready ? '\n✅ Ready! Type \`yes\` to deploy' : ''}
     `.trim());
 
@@ -864,10 +882,10 @@ _Examples: 10%, 500bps, 5% 5%_
             return await sendMessage(chatId, `
 ✅ Fees: *${(session.token.fees.clankerFee + session.token.fees.pairedFee) / 100}%*
 
-*Step 4/4: Image & Context*
-Now send:
+    *Step 4/4: Image & Context (Recommended)*
+    Now send:
 1️⃣ Token *image* (will upload to IPFS)
-2️⃣ *Tweet/cast link* for indexing
+2️⃣ *Tweet/cast link* for indexing quality
             `.trim());
 
         case 'collecting':
@@ -888,7 +906,7 @@ Now send:
 🎯 *Detected:* ${session.token.symbol} "${session.token.name || session.token.symbol}"
 💰 Fees: ${totalFee}%
 
-Send image + context link to continue.
+Send image/context now, or deploy langsung dengan fallback smart logic.
                 `.trim());
                 return;
             }
@@ -965,6 +983,8 @@ const checkAndPrompt = async (chatId, session) => {
     if (status.ready) {
         session.state = 'confirming';
         const t = session.token;
+        const displaySymbol = t.symbol || 'AUTO';
+        const displayName = t.name || `${displaySymbol} Token`;
         const totalFee = (t.fees.clankerFee + t.fees.pairedFee) / 100;
         const socialCount = Object.keys(t.socials || {}).length;
         const contexts = t.socials ? Object.keys(t.socials).map(k => k.charAt(0).toUpperCase() + k.slice(1)).join(', ') : 'None';
@@ -974,8 +994,8 @@ const checkAndPrompt = async (chatId, session) => {
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 📋 *Token Information*
-• *Name:* ${t.name}
-• *Symbol:* $${t.symbol}
+• *Name:* ${displayName}
+• *Symbol:* $${displaySymbol}
 • *Fees:* ${totalFee}% (${t.fees.clankerFee}/${t.fees.pairedFee} bps)
 
 🌍 *Deployment Context*
@@ -983,7 +1003,7 @@ const checkAndPrompt = async (chatId, session) => {
 • *Socials:* ${socialCount > 0 ? `${socialCount} added (${contexts})` : 'None'}
 
 ⚙️ *Settings*
-• *Image:* Uploaded ✅
+• *Image:* ${status.hasImage ? 'Uploaded ✅' : 'Auto fallback 🔁'}
 ${t.spoofTo ? `• *Spoofing:* ACTIVE 🎭\n  Target: \`${t.spoofTo}\`` : '• *Spoofing:* Inactive'}
 
 👉 Type *"/confirm"* or *"yes"* to LAUNCH!
@@ -991,10 +1011,9 @@ ${t.spoofTo ? `• *Spoofing:* ACTIVE 🎭\n  Target: \`${t.spoofTo}\`` : '• *
         `.trim());
     } else if (status.missing.length > 0) {
         const prompts = [];
-        if (status.missing.includes('image')) prompts.push('📷 Send token *image*');
-        if (!status.hasContext) prompts.push('🔗 Send *tweet/cast* (can include website/telegram links too)');
-        if (status.missing.includes('name')) prompts.push('📝 Need token *name*');
-        if (status.missing.includes('symbol')) prompts.push('🏷️ Need token *symbol*');
+        if (status.missing.includes('name_or_symbol')) prompts.push('📝 Need token *name* or *symbol*');
+        if (!status.hasImage) prompts.push('📷 (Opsional) Send token *image*');
+        if (!status.hasContext) prompts.push('🔗 (Disarankan) Send *tweet/cast* (can include website/telegram links too)');
 
         if (prompts.length > 0) {
             await sendMessage(chatId, `*Next:* ${prompts.join(' or ')}`);
@@ -1213,7 +1232,7 @@ const poll = async () => {
 
 const main = async () => {
     console.log('');
-    console.log('🐾 Clank & Claw Telegram Bot v2.6.5');
+    console.log('🐾 Clank & Claw Telegram Bot v2.7.0');
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 
     if (!BOT_TOKEN) {

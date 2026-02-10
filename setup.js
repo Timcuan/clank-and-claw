@@ -109,15 +109,23 @@ async function main() {
         await setupIPFS(env);
     }
 
-    // ─── DEFAULTS ───
-    console.log(`\n${colors.green}═══ 4. DEFAULTS ═══${colors.reset}\n`);
+    // ─── OPTIONAL DEFAULTS ───
+    console.log(`\n${colors.green}═══ 4. OPTIONAL DEFAULTS ═══${colors.reset}\n`);
 
-    env.DEFAULT_FEES = env.DEFAULT_FEES || '200';
-    env.DEFAULT_PLATFORM = env.DEFAULT_PLATFORM || 'twitter';
+    env.DEFAULT_CONTEXT_ID = env.DEFAULT_CONTEXT_ID || '';
+    env.DEFAULT_IMAGE_URL = env.DEFAULT_IMAGE_URL || '';
     env.VANITY = env.VANITY || 'true';
+    env.REQUIRE_CONTEXT = env.REQUIRE_CONTEXT || 'true';
+    env.SMART_VALIDATION = env.SMART_VALIDATION || 'true';
 
-    log.ok(`Default fees: ${parseInt(env.DEFAULT_FEES) / 100}%`);
-    log.ok(`Default platform: ${env.DEFAULT_PLATFORM}`);
+    log.ok(`Vanity mode (env/legacy): ${env.VANITY}`);
+    log.ok(`Require context for deploy: ${env.REQUIRE_CONTEXT}`);
+    log.ok(`Smart validation auto-heal: ${env.SMART_VALIDATION}`);
+    if (env.DEFAULT_CONTEXT_ID) {
+        log.ok(`Default context ID: ${env.DEFAULT_CONTEXT_ID}`);
+    } else {
+        log.info('Default context ID not set (optional)');
+    }
 
     // ─── SAVE ───
     console.log(`\n${colors.green}═══ SAVING CONFIGURATION ═══${colors.reset}\n`);
@@ -145,10 +153,12 @@ INFURA_PROJECT_ID=${env.INFURA_PROJECT_ID || ''}
 INFURA_SECRET=${env.INFURA_SECRET || ''}
 IPFS_GATEWAYS=${env.IPFS_GATEWAYS || ''}
 
-# ─── DEFAULTS ─────────────────────────────
-DEFAULT_FEES=${env.DEFAULT_FEES || '200'}
-DEFAULT_PLATFORM=${env.DEFAULT_PLATFORM || 'twitter'}
+# ─── OPTIONAL DEFAULTS ────────────────────
+DEFAULT_CONTEXT_ID=${env.DEFAULT_CONTEXT_ID || ''}
+DEFAULT_IMAGE_URL=${env.DEFAULT_IMAGE_URL || ''}
 VANITY=${env.VANITY || 'true'}
+REQUIRE_CONTEXT=${env.REQUIRE_CONTEXT || 'true'}
+SMART_VALIDATION=${env.SMART_VALIDATION || 'true'}
 `;
 
     fs.writeFileSync(envPath, envContent);

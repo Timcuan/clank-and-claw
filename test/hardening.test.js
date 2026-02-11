@@ -506,6 +506,13 @@ test('validateConfig requires explicit name/symbol when _meta.smartValidation is
     assert.throws(() => validateConfig(config), /Token symbol is required \(non-empty\)/);
 });
 
+test('validateConfig requires explicit fees for token-json when _meta.smartValidation is false', () => {
+    const config = baseConfig();
+    delete config.fees;
+    config._meta = { smartValidation: false, configSource: 'token-json', tokenJsonHasExplicitFees: false };
+    assert.throws(() => validateConfig(config), /Fees are required in token\.json/);
+});
+
 test('validateConfig normalizes twitter context URL to status ID', () => {
     const config = baseConfig();
     config.context = { platform: 'twitter', messageId: 'https://x.com/user/status/123456789' };
@@ -516,7 +523,7 @@ test('validateConfig normalizes twitter context URL to status ID', () => {
 test('validateConfig accepts non-twitter/farcaster context platforms', () => {
     const config = baseConfig();
     config.context = { platform: 'github', messageId: 'https://github.com/HKUDS/MoChat' };
-    config._meta = { smartValidation: false, configSource: 'token-json' };
+    config._meta = { smartValidation: false, configSource: 'token-json', tokenJsonHasExplicitFees: true };
     const validated = validateConfig(config);
     assert.equal(validated.context.platform, 'github');
     assert.equal(validated.context.messageId, 'https://github.com/HKUDS/MoChat');

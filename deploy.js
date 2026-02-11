@@ -29,11 +29,13 @@ Options:
   --env, -e        Load config from .env
   --spoof <addr>   Override spoof target address (0x...)
   --strict         Enable strict verification mode
+  --check          Validate config only (no deploy)
   --help, -h       Show this help message
 
 Examples:
   node deploy.js
   node deploy.js token.json
+  node deploy.js --check token.json
   node deploy.js --env
   node deploy.js --spoof 0x1234...abcd`);
 };
@@ -44,6 +46,7 @@ const parseArgs = (args = process.argv.slice(2)) => {
         spoof: null,
         strict: false,
         env: false,
+        check: false,
         help: false
     };
 
@@ -55,6 +58,10 @@ const parseArgs = (args = process.argv.slice(2)) => {
         }
         if (arg === '--strict') {
             options.strict = true;
+            continue;
+        }
+        if (arg === '--check') {
+            options.check = true;
             continue;
         }
         if (arg === '--help' || arg === '-h') {
@@ -214,6 +221,11 @@ async function main() {
         printPreflight(config);
 
         // 5. Execution
+        if (opts.check) {
+            console.log('\n✅ Configuration check passed (no deploy executed).');
+            return;
+        }
+
         console.log(`\n🚀 \x1b[36mDeploying ${config.name} (${config.symbol})...\x1b[0m`);
 
         // Safety check

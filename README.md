@@ -110,6 +110,11 @@ CI/local full test suite:
 npm run test:ci
 ```
 
+Fast token.json validation (no deploy):
+```bash
+npm run token:check
+```
+
 ## VPS Production Workflow
 
 Full install and repair SOP:

@@ -498,6 +498,14 @@ test('validateConfig does not auto-correct when _meta.smartValidation is false',
     assert.throws(() => validateConfig(config), /Token Image must be a valid HTTP\(S\) URL or IPFS CID/);
 });
 
+test('validateConfig requires explicit name/symbol when _meta.smartValidation is false', () => {
+    const config = baseConfig();
+    config.name = '   ';
+    config.symbol = '';
+    config._meta = { smartValidation: false };
+    assert.throws(() => validateConfig(config), /Token symbol is required \(non-empty\)/);
+});
+
 test('validateConfig normalizes twitter context URL to status ID', () => {
     const config = baseConfig();
     config.context = { platform: 'twitter', messageId: 'https://x.com/user/status/123456789' };
@@ -751,7 +759,7 @@ test('loadTokenConfig defaults to strict smartValidation=false for token.json ed
     }
 });
 
-test('loadTokenConfig allows explicit smartValidation override', () => {
+test('loadTokenConfig ignores smartValidation override for token.json edits', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-smart-override-'));
     const filePath = path.join(tmpDir, 'token.json');
     const payload = {
@@ -767,7 +775,19 @@ test('loadTokenConfig allows explicit smartValidation override', () => {
 
     try {
         const cfg = loadTokenConfig(filePath);
-        assert.equal(cfg._meta.smartValidation, true);
+        assert.equal(cfg._meta.smartValidation, false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('loadTokenConfig reports line/column for invalid JSON', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-token-json-error-'));
+    const filePath = path.join(tmpDir, 'token.json');
+    fs.writeFileSync(filePath, '{\n  "name": "Broken",\n  "symbol": "BROKEN""image": "https://example.com/img.png"\n}\n');
+
+    try {
+        assert.throws(() => loadTokenConfig(filePath), /Invalid JSON in .*token\.json at line \d+, column \d+:/);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

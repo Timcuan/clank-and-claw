@@ -1,3 +1,29 @@
+# 🚀 Release Notes - Clank & Claw (Unreleased - IPFS Backend Hardening)
+
+### 📷 Image -> CID Reliability
+- **No-API-Key IPFS Path**: Added local Kubo RPC upload support via `IPFS_KUBO_API` for self-hosted image-to-CID conversion.
+- **Legacy Provider Guardrails**: Infura and NFT.Storage Classic uploads are now explicitly gated by `ENABLE_INFURA_IPFS_LEGACY` / `ENABLE_NFT_STORAGE_CLASSIC`.
+- **Provider Status Accuracy**: Telegram `/health` and startup logs now show active providers correctly, including local Kubo.
+- **Local-First Guidance**: Doctor now warns when upload backend is active without Kubo local, so local IPFS remains preferred.
+
+### 🛠️ VPS Operations
+- **`ipfs-setup` Wizard**: Added guided `vps-manager.sh ipfs-setup` flow (Kubo/Pinata/legacy/CID-only modes).
+- **Doctor Upgrade**: `clawctl doctor` now verifies upload backend readiness, not just IPFS gateway reachability.
+- **Setup Helpers Updated**: VPS setup now ships `~/ipfs-setup.sh` and includes Kubo optional connectivity checks.
+
+### 💾 Config Persistence
+- **Built-in Local Config DB**: Added `lib/config-store.js` with atomic file writes for per-chat draft + preset storage.
+- **Preset Commands**: Added `/profiles`, `/save <name>`, `/load <name>`, and `/deletepreset <name>`.
+- **Button Flow Integration**: `/a -> Settings -> Profiles` now supports save/load/delete preset actions.
+
+### 🧪 Regression Safety
+- Added hardening tests for IPFS provider-status behavior and invalid image input type handling.
+
+---
+*Date: February 11, 2026*
+
+---
+
 # 🚀 Release Notes - Clank & Claw v2.7.0 (Smart Logic + Documentation Refresh)
 
 ### 🧠 Smart Deployment Runtime

@@ -11,6 +11,7 @@
     "vps:wizard": "bash vps-manager.sh wizard",
     "vps:update": "bash vps-manager.sh update",
     "vps:telegram": "bash vps-manager.sh telegram-setup",
+    "vps:ipfs": "bash vps-manager.sh ipfs-setup",
     "vps:status": "bash vps-manager.sh status",
     "test": "DRY_RUN=true node deploy.js",
     "test:hardening": "node --test test/*.test.js"

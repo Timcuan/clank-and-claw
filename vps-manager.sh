@@ -31,6 +31,7 @@ Usage:
   bash vps-manager.sh doctor
   bash vps-manager.sh start
   bash vps-manager.sh telegram-setup
+  bash vps-manager.sh ipfs-setup
   bash vps-manager.sh stop
   bash vps-manager.sh restart
   bash vps-manager.sh status
@@ -93,6 +94,27 @@ check_rpc_endpoint() {
         -H 'content-type: application/json' \
         -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
         "$rpc_url" >/dev/null 2>&1
+}
+
+env_truthy() {
+    local normalized
+    normalized="$(echo "${1:-}" | tr '[:upper:]' '[:lower:]' | tr -d '"' | xargs)"
+    [[ "$normalized" == "1" || "$normalized" == "true" || "$normalized" == "yes" || "$normalized" == "on" ]]
+}
+
+check_kubo_api() {
+    local base="$1"
+    base="${base%/}"
+    [ -n "$base" ] || return 1
+    curl -fsS --max-time 8 "$base/api/v0/version" >/dev/null 2>&1
+}
+
+mask_presence() {
+    if [ -n "${1:-}" ]; then
+        echo "(set)"
+    else
+        echo "(empty)"
+    fi
 }
 
 ensure_env_file() {
@@ -262,6 +284,124 @@ setup_telegram_env() {
     if [ -z "$restart_now" ] || [[ "$restart_now" =~ ^[Yy]$ ]]; then
         restart_bot
     fi
+}
+
+setup_ipfs_env() {
+    require_project
+    cd "$PROJECT_DIR"
+    ensure_env_file
+
+    local current_kubo current_pinata_key current_pinata_secret current_infura_id current_infura_secret current_nft current_infura_legacy current_nft_legacy
+    current_kubo="$(read_env_value IPFS_KUBO_API)"
+    current_pinata_key="$(read_env_value PINATA_API_KEY)"
+    current_pinata_secret="$(read_env_value PINATA_SECRET_KEY)"
+    current_infura_id="$(read_env_value INFURA_PROJECT_ID)"
+    current_infura_secret="$(read_env_value INFURA_SECRET)"
+    current_nft="$(read_env_value NFT_STORAGE_TOKEN)"
+    current_infura_legacy="$(read_env_value ENABLE_INFURA_IPFS_LEGACY)"
+    current_nft_legacy="$(read_env_value ENABLE_NFT_STORAGE_CLASSIC)"
+
+    echo ""
+    echo "===== IPFS SETUP ====="
+    echo "Current config:"
+    echo "- IPFS_KUBO_API: ${current_kubo:-"(empty)"}"
+    echo "- PINATA_API_KEY: $(mask_presence "$current_pinata_key")"
+    echo "- PINATA_SECRET_KEY: $(mask_presence "$current_pinata_secret")"
+    echo "- INFURA_PROJECT_ID: $(mask_presence "$current_infura_id")"
+    echo "- NFT_STORAGE_TOKEN: $(mask_presence "$current_nft")"
+    echo "- ENABLE_INFURA_IPFS_LEGACY: ${current_infura_legacy:-false}"
+    echo "- ENABLE_NFT_STORAGE_CLASSIC: ${current_nft_legacy:-false}"
+    echo ""
+    echo "Choose upload backend:"
+    echo "1) Local Kubo (no API key, recommended if self-hosted)"
+    echo "2) Pinata (recommended hosted)"
+    echo "3) Legacy Infura IPFS"
+    echo "4) Legacy NFT.Storage Classic"
+    echo "5) Disable all upload backends (CID-only mode)"
+    echo "0) Cancel"
+    echo -n "Select option: "
+    local option
+    read -r option
+
+    case "$option" in
+        1)
+            local kubo_api
+            read -r -p "IPFS_KUBO_API [http://127.0.0.1:5001]: " kubo_api
+            kubo_api="${kubo_api:-http://127.0.0.1:5001}"
+            upsert_env_value IPFS_KUBO_API "$kubo_api"
+            upsert_env_value ENABLE_INFURA_IPFS_LEGACY "false"
+            upsert_env_value ENABLE_NFT_STORAGE_CLASSIC "false"
+
+            if check_kubo_api "$kubo_api"; then
+                ok "Kubo API reachable: $kubo_api"
+            else
+                warn "Kubo API not reachable yet: $kubo_api"
+                warn "Pastikan daemon IPFS aktif (contoh: ipfs daemon)"
+            fi
+            ;;
+        2)
+            local pinata_key pinata_secret
+            read -r -p "PINATA_API_KEY: " pinata_key
+            read -r -s -p "PINATA_SECRET_KEY: " pinata_secret
+            echo ""
+            if [ -z "$pinata_key" ] || [ -z "$pinata_secret" ]; then
+                err "Pinata key/secret wajib diisi."
+                return 1
+            fi
+            upsert_env_value PINATA_API_KEY "$pinata_key"
+            upsert_env_value PINATA_SECRET_KEY "$pinata_secret"
+            upsert_env_value ENABLE_INFURA_IPFS_LEGACY "false"
+            upsert_env_value ENABLE_NFT_STORAGE_CLASSIC "false"
+            ok "Pinata config tersimpan."
+            ;;
+        3)
+            local infura_id infura_secret
+            read -r -p "INFURA_PROJECT_ID: " infura_id
+            read -r -s -p "INFURA_SECRET (optional): " infura_secret
+            echo ""
+            if [ -z "$infura_id" ]; then
+                err "INFURA_PROJECT_ID wajib diisi."
+                return 1
+            fi
+            upsert_env_value INFURA_PROJECT_ID "$infura_id"
+            upsert_env_value INFURA_SECRET "$infura_secret"
+            upsert_env_value ENABLE_INFURA_IPFS_LEGACY "true"
+            ok "Legacy Infura IPFS diaktifkan."
+            ;;
+        4)
+            local nft_token
+            read -r -s -p "NFT_STORAGE_TOKEN: " nft_token
+            echo ""
+            if [ -z "$nft_token" ]; then
+                err "NFT_STORAGE_TOKEN wajib diisi."
+                return 1
+            fi
+            upsert_env_value NFT_STORAGE_TOKEN "$nft_token"
+            upsert_env_value ENABLE_NFT_STORAGE_CLASSIC "true"
+            ok "Legacy NFT.Storage Classic diaktifkan."
+            ;;
+        5)
+            upsert_env_value IPFS_KUBO_API ""
+            upsert_env_value PINATA_API_KEY ""
+            upsert_env_value PINATA_SECRET_KEY ""
+            upsert_env_value INFURA_PROJECT_ID ""
+            upsert_env_value INFURA_SECRET ""
+            upsert_env_value NFT_STORAGE_TOKEN ""
+            upsert_env_value ENABLE_INFURA_IPFS_LEGACY "false"
+            upsert_env_value ENABLE_NFT_STORAGE_CLASSIC "false"
+            warn "Upload backend dimatikan. Bot hanya bisa menerima CID existing."
+            ;;
+        0)
+            warn "IPFS setup dibatalkan."
+            return 0
+            ;;
+        *)
+            err "Pilihan tidak valid."
+            return 1
+            ;;
+    esac
+
+    ok "IPFS config tersimpan di $PROJECT_DIR/.env"
 }
 
 clear_telegram_webhook() {
@@ -584,6 +724,81 @@ do_doctor() {
         fi
     fi
 
+    local ipfs_kubo_api pinata_key pinata_secret infura_project_id nft_storage_token infura_legacy nft_legacy ipfs_upload_ready
+    ipfs_kubo_api="$(read_env_value IPFS_KUBO_API)"
+    pinata_key="$(read_env_value PINATA_API_KEY)"
+    pinata_secret="$(read_env_value PINATA_SECRET_KEY)"
+    infura_project_id="$(read_env_value INFURA_PROJECT_ID)"
+    nft_storage_token="$(read_env_value NFT_STORAGE_TOKEN)"
+    infura_legacy="$(read_env_value ENABLE_INFURA_IPFS_LEGACY)"
+    nft_legacy="$(read_env_value ENABLE_NFT_STORAGE_CLASSIC)"
+    ipfs_upload_ready=0
+
+    if [ -n "$ipfs_kubo_api" ]; then
+        if check_kubo_api "$ipfs_kubo_api"; then
+            ok "IPFS upload backend: Kubo local reachable ($ipfs_kubo_api)"
+            ipfs_upload_ready=1
+        else
+            warn "IPFS_KUBO_API set but unreachable: $ipfs_kubo_api"
+            warned=$((warned + 1))
+        fi
+    fi
+
+    if [ -n "$pinata_key" ] && [ -n "$pinata_secret" ]; then
+        ok "IPFS upload backend: Pinata configured"
+        ipfs_upload_ready=1
+    elif [ -n "$pinata_key" ] || [ -n "$pinata_secret" ]; then
+        warn "Pinata config incomplete (butuh PINATA_API_KEY + PINATA_SECRET_KEY)"
+        warned=$((warned + 1))
+    fi
+
+    if [ -n "$infura_project_id" ]; then
+        if env_truthy "$infura_legacy"; then
+            ok "Legacy Infura IPFS enabled"
+            ipfs_upload_ready=1
+        else
+            warn "INFURA_PROJECT_ID ada tapi ENABLE_INFURA_IPFS_LEGACY=false (not used)"
+            warned=$((warned + 1))
+        fi
+    fi
+
+    if [ -n "$nft_storage_token" ]; then
+        if env_truthy "$nft_legacy"; then
+            ok "Legacy NFT.Storage Classic enabled"
+            ipfs_upload_ready=1
+        else
+            warn "NFT_STORAGE_TOKEN ada tapi ENABLE_NFT_STORAGE_CLASSIC=false (not used)"
+            warned=$((warned + 1))
+        fi
+    fi
+
+    if [ "$ipfs_upload_ready" -eq 0 ]; then
+        warn "Tidak ada backend upload IPFS aktif. Kirim gambar ke bot tidak bisa auto-convert CID."
+        warn "Jalankan: bash vps-manager.sh ipfs-setup"
+        warned=$((warned + 1))
+    elif [ -z "$ipfs_kubo_api" ]; then
+        warn "Backend upload aktif tanpa IPFS local. Disarankan utamakan Kubo local (IPFS_KUBO_API)."
+        warned=$((warned + 1))
+    fi
+
+    local config_store_path config_store_abs config_store_dir
+    config_store_path="$(read_env_value CONFIG_STORE_PATH)"
+    if [ -z "$config_store_path" ]; then
+        config_store_path="./data/bot-config-store.json"
+    fi
+    if [[ "$config_store_path" = /* ]]; then
+        config_store_abs="$config_store_path"
+    else
+        config_store_abs="$PROJECT_DIR/$config_store_path"
+    fi
+    config_store_dir="$(dirname "$config_store_abs")"
+    if mkdir -p "$config_store_dir" 2>/dev/null && [ -w "$config_store_dir" ]; then
+        ok "Config DB writable: $config_store_abs"
+    else
+        err "Config DB path not writable: $config_store_abs"
+        failed=$((failed + 1))
+    fi
+
     if pm2_exists && pm2_app_exists; then
         local pm2_pid
         pm2_pid="$(pm2 pid "$APP_NAME" 2>/dev/null | tr -d '[:space:]' || true)"
@@ -757,6 +972,7 @@ do_uninstall() {
         "$HOME/claw-netcheck.sh" \
         "$HOME/run-bot.sh" \
         "$HOME/bot-setup.sh" \
+        "$HOME/ipfs-setup.sh" \
         "$HOME/bot-start.sh" \
         "$HOME/bot-stop.sh" \
         "$HOME/bot-status.sh" \
@@ -814,15 +1030,16 @@ wizard() {
         echo "2) Update (git + npm + test + restart)"
         echo "3) Doctor (preflight full check)"
         echo "4) Telegram bot setup (.env + token validation)"
-        echo "5) Start bot"
-        echo "6) Stop bot"
-        echo "7) Restart bot"
-        echo "8) Status"
-        echo "9) Logs"
-        echo "10) Network check"
-        echo "11) Self-heal"
-        echo "12) Backup"
-        echo "13) Uninstall clean"
+        echo "5) IPFS setup (.env upload backend)"
+        echo "6) Start bot"
+        echo "7) Stop bot"
+        echo "8) Restart bot"
+        echo "9) Status"
+        echo "10) Logs"
+        echo "11) Network check"
+        echo "12) Self-heal"
+        echo "13) Backup"
+        echo "14) Uninstall clean"
         echo "0) Exit"
         echo -n "Pilih menu: "
         read -r menu
@@ -832,15 +1049,16 @@ wizard() {
             2) do_update ;;
             3) do_doctor ;;
             4) setup_telegram_env ;;
-            5) start_bot ;;
-            6) stop_bot ;;
-            7) restart_bot ;;
-            8) show_status ;;
-            9) show_logs 120 ;;
-            10) run_netcheck ;;
-            11) do_heal ;;
-            12) do_backup ;;
-            13) do_uninstall ;;
+            5) setup_ipfs_env ;;
+            6) start_bot ;;
+            7) stop_bot ;;
+            8) restart_bot ;;
+            9) show_status ;;
+            10) show_logs 120 ;;
+            11) run_netcheck ;;
+            12) do_heal ;;
+            13) do_backup ;;
+            14) do_uninstall ;;
             0) break ;;
             *) warn "Pilihan tidak valid" ;;
         esac
@@ -868,6 +1086,7 @@ main() {
         update) do_update ;;
         doctor) do_doctor ;;
         telegram-setup) setup_telegram_env ;;
+        ipfs-setup) setup_ipfs_env ;;
         start) start_bot ;;
         stop) stop_bot ;;
         restart) restart_bot ;;

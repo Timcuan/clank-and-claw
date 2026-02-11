@@ -27,6 +27,7 @@ import { handleFallback } from './lib/fallback.js';
 import { sessionManager, DEFAULT_SESSION_FEES } from './lib/session-manager.js';
 import { createConfigFromSession } from './lib/config.js';
 import { isRetryableTelegramApiResult } from './lib/telegram-network.js';
+import { configStore } from './lib/config-store.js';
 
 // ═══════════════════════════════════════════
 // CONFIGURATION
@@ -88,6 +89,14 @@ const buildTelegramFileUrl = (origin, filePath) => {
 };
 
 const formatHealthError = (value) => String(value || 'unknown error').replace(/\s+/g, ' ').trim();
+const listEnabledIpfsProviders = (status) => {
+    const providers = [];
+    if (status.kuboLocal) providers.push('Kubo Local');
+    if (status.pinata) providers.push('Pinata');
+    if (status.infura) providers.push('Infura (Legacy)');
+    if (status.nftStorage) providers.push('NFT.Storage Classic (Legacy)');
+    return providers;
+};
 let botLockFd = null;
 const isPermanentStartupError = (message) => {
     const text = String(message || '').toLowerCase();
@@ -537,8 +546,68 @@ const sendButtons = async (chatId, text, buttons) => {
 // SESSION MANAGEMENT - With Auto-Cleanup
 // ═══════════════════════════════════════════
 
-const getSession = (chatId) => sessionManager.get(chatId);
-const resetSession = (chatId) => sessionManager.reset(chatId);
+const cloneTokenDraft = (token) => ({
+    name: token?.name ?? null,
+    symbol: token?.symbol ?? null,
+    image: token?.image ?? null,
+    description: token?.description ?? null,
+    fees: {
+        clankerFee: Number(token?.fees?.clankerFee ?? DEFAULT_FEES.clankerFee),
+        pairedFee: Number(token?.fees?.pairedFee ?? DEFAULT_FEES.pairedFee)
+    },
+    context: token?.context
+        ? {
+            platform: String(token.context.platform || 'website'),
+            messageId: String(token.context.messageId || '')
+        }
+        : null,
+    socials: { ...(token?.socials || {}) },
+    spoofTo: token?.spoofTo ?? null
+});
+
+const hydrateSessionFromDraft = (session, draft) => {
+    if (!draft || typeof draft !== 'object') return;
+    session.token = cloneTokenDraft(draft);
+    session.state = 'collecting';
+};
+
+const persistSessionDraft = (chatId, session) => {
+    try {
+        configStore.saveDraft(chatId, cloneTokenDraft(session.token));
+    } catch (error) {
+        console.error('Draft save warning:', error.message);
+    }
+};
+
+const clearSessionDraft = (chatId) => {
+    try {
+        configStore.clearDraft(chatId);
+    } catch (error) {
+        console.error('Draft clear warning:', error.message);
+    }
+};
+
+const getSession = (chatId) => {
+    const session = sessionManager.get(chatId);
+    if (!session._draftHydrated) {
+        const draft = configStore.getDraft(chatId);
+        if (draft) {
+            hydrateSessionFromDraft(session, draft);
+        }
+        session._draftHydrated = true;
+    }
+    return session;
+};
+
+const resetSession = (chatId, options = {}) => {
+    const clearDraft = options.clearDraft !== false;
+    const session = sessionManager.reset(chatId);
+    session._draftHydrated = true;
+    if (clearDraft) {
+        clearSessionDraft(chatId);
+    }
+    return session;
+};
 
 const isAuthorized = (chatId) => {
     if (ADMIN_CHAT_IDS.length === 0) return true;
@@ -580,6 +649,10 @@ const UI_ACTIONS = {
     SET_CONTEXT: 'm_context',
     SET_IMAGE: 'm_image',
     SET_SPOOF: 'm_spoof',
+    PROFILES: 'm_profiles',
+    PROFILE_SAVE: 'pf_save',
+    PROFILE_LOAD: 'pf_load',
+    PROFILE_DELETE: 'pf_delete',
     STATUS: 'm_status',
     HEALTH: 'm_health',
     DEPLOY: 'm_deploy',
@@ -596,6 +669,7 @@ const UI_ACTIONS = {
 };
 
 const IMAGE_INPUT_STATES = new Set(['menu_image', 'wizard_image']);
+const PROFILE_INPUT_STATES = new Set(['menu_profile_save', 'menu_profile_load', 'menu_profile_delete']);
 
 const canAcceptImageInput = (session) => IMAGE_INPUT_STATES.has(String(session?.state || ''));
 
@@ -635,7 +709,8 @@ const getSettingsButtons = (token) => {
         [{ text: 'Name', data: UI_ACTIONS.SET_NAME }, { text: 'Symbol', data: UI_ACTIONS.SET_SYMBOL }],
         [{ text: 'Fees', data: UI_ACTIONS.SET_FEES }, { text: 'Context', data: UI_ACTIONS.SET_CONTEXT }],
         [{ text: 'Image', data: UI_ACTIONS.SET_IMAGE }, { text: spoofLabel, data: UI_ACTIONS.SET_SPOOF }],
-        [{ text: 'Fallback', data: UI_ACTIONS.FALLBACK }, { text: 'Main Panel', data: UI_ACTIONS.MENU }]
+        [{ text: 'Profiles', data: UI_ACTIONS.PROFILES }, { text: 'Fallback', data: UI_ACTIONS.FALLBACK }],
+        [{ text: 'Main Panel', data: UI_ACTIONS.MENU }]
     ];
 };
 
@@ -643,6 +718,12 @@ const getFallbackButtons = () => [
     [{ text: 'Auto-fill Missing', data: UI_ACTIONS.FB_AUTOFILL }, { text: 'Clear Image', data: UI_ACTIONS.FB_CLEAR_IMAGE }],
     [{ text: 'Clear Context', data: UI_ACTIONS.FB_CLEAR_CONTEXT }, { text: 'Clear Socials', data: UI_ACTIONS.FB_CLEAR_SOCIALS }],
     [{ text: 'Reset Session', data: UI_ACTIONS.CANCEL }, { text: 'Settings', data: UI_ACTIONS.SETTINGS }]
+];
+
+const getProfileButtons = () => [
+    [{ text: 'Save Preset', data: UI_ACTIONS.PROFILE_SAVE }, { text: 'Load Preset', data: UI_ACTIONS.PROFILE_LOAD }],
+    [{ text: 'Delete Preset', data: UI_ACTIONS.PROFILE_DELETE }, { text: 'Settings', data: UI_ACTIONS.SETTINGS }],
+    [{ text: 'Main Panel', data: UI_ACTIONS.MENU }]
 ];
 
 const sendWizardImagePrompt = async (chatId) => {
@@ -722,11 +803,13 @@ ${status.ready ? 'Ready to deploy' : 'Configure fields using buttons below'}
 };
 
 const showControlPanel = async (chatId, session, title) => {
+    persistSessionDraft(chatId, session);
     const panel = formatSessionPanel(session, title);
     return await sendButtons(chatId, panel.text, panel.buttons);
 };
 
 const showSettingsPanel = async (chatId, session, title = '*Settings Panel*') => {
+    persistSessionDraft(chatId, session);
     const t = session.token;
     const feePercent = ((Number(t?.fees?.clankerFee || 0) + Number(t?.fees?.pairedFee || 0)) / 100).toFixed(2);
     return await sendButtons(chatId, `
@@ -744,11 +827,30 @@ Spoof: ${t.spoofTo ? 'On' : 'Off'}
 };
 
 const showFallbackPanel = async (chatId, session) => {
+    persistSessionDraft(chatId, session);
     return await sendButtons(chatId, `
 *Fallback Tools*
 ━━━━━━━━━━━━━━━━━━━━━
 Use these actions to auto-heal or clean the current config.
     `.trim(), getFallbackButtons());
+};
+
+const showProfilesPanel = async (chatId, session, title = '*Config Profiles*') => {
+    persistSessionDraft(chatId, session);
+
+    const presets = configStore.listPresets(chatId);
+    const lines = presets.length === 0
+        ? ['No presets saved.']
+        : presets.slice(0, 20).map((item, idx) => `${idx + 1}. ${item.name}`);
+
+    return await sendButtons(chatId, `
+${title}
+━━━━━━━━━━━━━━━━━━━━━
+Saved presets (${presets.length}):
+${lines.join('\n')}
+
+Tip: draft for current chat is auto-saved.
+    `.trim(), getProfileButtons());
 };
 
 // ═══════════════════════════════════════════
@@ -777,9 +879,11 @@ const handleStart = async (chatId, username) => {
 • */deploy* - Start guided wizard
 • */go* <SYMBOL> "<NAME>" <FEES> - Quick setup
 • */spoof* <ADDRESS> - Set spoof target
+• */profiles* - Manage saved config presets
 
 Use */a* for button-first workflow.
 Image uploads are accepted only from */a* -> *Settings* -> *Image*.
+IPFS upload priority: *Local Kubo* -> Pinata -> legacy providers.
 
 _Ready for instructions._
     `.trim());
@@ -802,6 +906,7 @@ const handleHelp = async (chatId) => {
 \`/go SYMBOL "Name" FEES\` quick setup
 \`/spoof 0x...\` enable spoof
 \`/spoof off\` disable spoof
+\`/profiles\` saved presets
 \`/status\` wallet status
 \`/health\` system health
 \`/cancel\` reset session
@@ -875,10 +980,8 @@ const handleHealth = async (chatId) => {
 
         const activeTelegramOrigin = TELEGRAM_API_ORIGINS[activeTelegramOriginIndex] || TELEGRAM_API_ORIGINS[0];
         const healthyRpc = rpcChecks.find(item => item.ok);
-        const ipfsProviders = [];
-        if (ipfsStatus.nftStorage) ipfsProviders.push('NFT.Storage');
-        if (ipfsStatus.pinata) ipfsProviders.push('Pinata');
-        if (ipfsStatus.infura) ipfsProviders.push('Infura');
+        const ipfsProviders = listEnabledIpfsProviders(ipfsStatus);
+        const storeStats = configStore.getStats();
 
         const telegramLines = telegramChecks.map(item => item.ok
             ? `• ✅ \`${item.origin}\` (${item.latencyMs}ms)`
@@ -893,7 +996,8 @@ const handleHealth = async (chatId) => {
             `IPFS: ${ipfsStatus.any ? ipfsProviders.join(', ') : 'Not configured'}`,
             `Active Telegram Origin: \`${activeTelegramOrigin}\``,
             `Preferred RPC: ${healthyRpc ? `\`${healthyRpc.rpcUrl}\`` : '_No healthy RPC_'}`,
-            `Session Cache: ${sessionManager.count()} active chat(s)`
+            `Session Cache: ${sessionManager.count()} active chat(s)`,
+            `Config DB: ${storeStats.users} chat(s), ${storeStats.presets} preset(s)`
         ].join('\n');
 
         const resultMessage = `
@@ -920,6 +1024,62 @@ const handleConfig = async (chatId) => {
     await showControlPanel(chatId, session, '*Current Session*');
 };
 
+const handleProfiles = async (chatId) => {
+    const session = getSession(chatId);
+    await showProfilesPanel(chatId, session);
+};
+
+const handleSavePreset = async (chatId, nameInput) => {
+    const session = getSession(chatId);
+    const name = String(nameInput || '').trim();
+    if (!name) {
+        return await sendMessage(chatId, 'Preset name is required. Example: `/save default`');
+    }
+
+    try {
+        const saved = configStore.savePreset(chatId, name, cloneTokenDraft(session.token));
+        persistSessionDraft(chatId, session);
+        return await sendMessage(chatId, `Preset saved: *${saved.name}*`);
+    } catch (error) {
+        return await sendMessage(chatId, `Failed to save preset: ${error.message}`);
+    }
+};
+
+const handleLoadPreset = async (chatId, nameInput, options = {}) => {
+    const session = getSession(chatId);
+    const showPanel = options.showPanel !== false;
+    const name = String(nameInput || '').trim();
+    if (!name) {
+        return await sendMessage(chatId, 'Preset name is required. Example: `/load default`');
+    }
+
+    const preset = configStore.loadPreset(chatId, name);
+    if (!preset) {
+        return await sendMessage(chatId, `Preset not found: *${name}*`);
+    }
+
+    hydrateSessionFromDraft(session, preset.token);
+    session.state = 'collecting';
+    persistSessionDraft(chatId, session);
+    await sendMessage(chatId, `Preset loaded: *${preset.name}*`);
+    if (showPanel) {
+        return await showControlPanel(chatId, session, '*Current Session*');
+    }
+};
+
+const handleDeletePreset = async (chatId, nameInput) => {
+    const name = String(nameInput || '').trim();
+    if (!name) {
+        return await sendMessage(chatId, 'Preset name is required. Example: `/deletepreset default`');
+    }
+
+    const deleted = configStore.deletePreset(chatId, name);
+    if (!deleted) {
+        return await sendMessage(chatId, `Preset not found: *${name}*`);
+    }
+    return await sendMessage(chatId, `Preset deleted: *${name}*`);
+};
+
 const handleSpoof = async (chatId, address) => {
     const session = getSession(chatId);
     const target = String(address || '').trim();
@@ -930,6 +1090,7 @@ const handleSpoof = async (chatId, address) => {
         }
 
         session.token.spoofTo = null;
+        persistSessionDraft(chatId, session);
         return await sendMessage(chatId, 'Spoof disabled. Rewards now route to the deployer wallet.');
     }
 
@@ -944,6 +1105,7 @@ Current: ${session.token.spoofTo ? `\`${session.token.spoofTo}\`` : '_None_'}
     }
 
     session.token.spoofTo = target;
+    persistSessionDraft(chatId, session);
     await sendMessage(chatId, `Spoof enabled: \`${target}\``);
 };
 
@@ -978,6 +1140,7 @@ const handleGo = async (chatId, args) => {
     }
 
     session.state = 'collecting';
+    persistSessionDraft(chatId, session);
 
     const totalFee = (session.token.fees.clankerFee + session.token.fees.pairedFee) / 100;
     const displayName = renderFieldValue(session.token.name);
@@ -1045,6 +1208,9 @@ const handleMenuAction = async (chatId, data) => {
         case UI_ACTIONS.FALLBACK:
             return await showFallbackPanel(chatId, session);
 
+        case UI_ACTIONS.PROFILES:
+            return await showProfilesPanel(chatId, session);
+
         case UI_ACTIONS.WIZARD:
             return await handleDeploy(chatId);
 
@@ -1074,12 +1240,14 @@ Choose preset or send custom fee text:
         case UI_ACTIONS.FEE_PRESET_6:
             session.token.fees = { ...DEFAULT_FEES };
             session.state = 'collecting';
+            persistSessionDraft(chatId, session);
             await sendMessage(chatId, 'Fees set to *6.00%* (3% + 3%).');
             return await showSettingsPanel(chatId, session);
 
         case UI_ACTIONS.FEE_PRESET_5:
             session.token.fees = { clankerFee: 250, pairedFee: 250 };
             session.state = 'collecting';
+            persistSessionDraft(chatId, session);
             await sendMessage(chatId, 'Fees set to *5.00%* (2.5% + 2.5%).');
             return await showSettingsPanel(chatId, session);
 
@@ -1099,6 +1267,24 @@ Choose preset or send custom fee text:
             session.state = 'menu_spoof';
             return await sendButtons(chatId, 'Send spoof address (`0x...`) or `off` to disable.', [
                 [{ text: 'Back', data: UI_ACTIONS.SETTINGS }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+            ]);
+
+        case UI_ACTIONS.PROFILE_SAVE:
+            session.state = 'menu_profile_save';
+            return await sendButtons(chatId, 'Send preset name to save current config.', [
+                [{ text: 'Back', data: UI_ACTIONS.PROFILES }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+            ]);
+
+        case UI_ACTIONS.PROFILE_LOAD:
+            session.state = 'menu_profile_load';
+            return await sendButtons(chatId, 'Send preset name to load.', [
+                [{ text: 'Back', data: UI_ACTIONS.PROFILES }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+            ]);
+
+        case UI_ACTIONS.PROFILE_DELETE:
+            session.state = 'menu_profile_delete';
+            return await sendButtons(chatId, 'Send preset name to delete.', [
+                [{ text: 'Back', data: UI_ACTIONS.PROFILES }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
             ]);
 
         case UI_ACTIONS.FB_AUTOFILL:
@@ -1219,6 +1405,7 @@ const processMessage = async (chatId, text, session) => {
     if (session.state === 'menu_name') {
         session.token.name = String(text || '');
         session.state = 'collecting';
+        persistSessionDraft(chatId, session);
         await sendMessage(chatId, `Name set: ${renderFieldValue(session.token.name, '`(empty)`')}`);
         return await showSettingsPanel(chatId, session);
     }
@@ -1227,6 +1414,7 @@ const processMessage = async (chatId, text, session) => {
         session.token.symbol = String(text || '');
         if (!session.token.name) session.token.name = session.token.symbol;
         session.state = 'collecting';
+        persistSessionDraft(chatId, session);
         await sendMessage(chatId, `Symbol set: ${renderFieldValue(session.token.symbol, '`(empty)`')}`);
         return await showSettingsPanel(chatId, session);
     }
@@ -1236,6 +1424,7 @@ const processMessage = async (chatId, text, session) => {
         if (!fees) return await sendMessage(chatId, 'Invalid fee format. Try `6%`, `600bps`, or `3% 3%`.');
         session.token.fees = fees;
         session.state = 'collecting';
+        persistSessionDraft(chatId, session);
         await sendMessage(chatId, `Fees set: *${((fees.clankerFee + fees.pairedFee) / 100).toFixed(2)}%*`);
         return await showSettingsPanel(chatId, session);
     }
@@ -1248,6 +1437,7 @@ const processMessage = async (chatId, text, session) => {
             session.token.socials = { ...session.token.socials, ...socials };
         }
         session.state = 'collecting';
+        persistSessionDraft(chatId, session);
         await sendMessage(chatId, `Context set: *${context.platform}* (${context.messageId})`);
         return await showSettingsPanel(chatId, session);
     }
@@ -1262,6 +1452,7 @@ const processMessage = async (chatId, text, session) => {
             return await sendMessage(chatId, 'Send image as photo, HTTPS URL, or IPFS CID.');
         }
         session.state = 'collecting';
+        persistSessionDraft(chatId, session);
         await sendMessage(chatId, 'Image reference updated.');
         return await showSettingsPanel(chatId, session);
     }
@@ -1271,6 +1462,7 @@ const processMessage = async (chatId, text, session) => {
         if (SPOOF_DISABLE_KEYWORDS.has(target.toLowerCase())) {
             session.token.spoofTo = null;
             session.state = 'collecting';
+            persistSessionDraft(chatId, session);
             await sendMessage(chatId, 'Spoof disabled.');
             return await showSettingsPanel(chatId, session);
         }
@@ -1279,13 +1471,40 @@ const processMessage = async (chatId, text, session) => {
         }
         session.token.spoofTo = target;
         session.state = 'collecting';
+        persistSessionDraft(chatId, session);
         await sendMessage(chatId, `Spoof target set: \`${target}\``);
         return await showSettingsPanel(chatId, session);
+    }
+
+    if (PROFILE_INPUT_STATES.has(String(session.state || ''))) {
+        const presetName = String(text || '').trim();
+        if (!presetName) {
+            return await sendMessage(chatId, 'Preset name cannot be empty.');
+        }
+
+        if (session.state === 'menu_profile_save') {
+            await handleSavePreset(chatId, presetName);
+            session.state = 'collecting';
+            return await showProfilesPanel(chatId, session);
+        }
+
+        if (session.state === 'menu_profile_load') {
+            await handleLoadPreset(chatId, presetName, { showPanel: false });
+            session.state = 'collecting';
+            return await showProfilesPanel(chatId, session);
+        }
+
+        if (session.state === 'menu_profile_delete') {
+            await handleDeletePreset(chatId, presetName);
+            session.state = 'collecting';
+            return await showProfilesPanel(chatId, session);
+        }
     }
 
     if (session.state === 'wizard_image') {
         if (lowerText === '/skip' || lowerText === 'skip') {
             session.state = 'wizard_context';
+            persistSessionDraft(chatId, session);
             return await sendWizardContextPrompt(chatId);
         }
 
@@ -1293,12 +1512,14 @@ const processMessage = async (chatId, text, session) => {
         if (isIPFSCid(trimmed)) {
             session.token.image = trimmed.replace('ipfs://', '');
             session.state = 'wizard_context';
+            persistSessionDraft(chatId, session);
             await sendMessage(chatId, 'Image set.');
             return await sendWizardContextPrompt(chatId);
         }
         if (/^https?:\/\//i.test(trimmed)) {
             session.token.image = trimmed;
             session.state = 'wizard_context';
+            persistSessionDraft(chatId, session);
             await sendMessage(chatId, 'Image URL set.');
             return await sendWizardContextPrompt(chatId);
         }
@@ -1308,6 +1529,7 @@ const processMessage = async (chatId, text, session) => {
 
     if (session.state === 'wizard_context' && (lowerText === '/skip' || lowerText === 'skip')) {
         session.state = 'collecting';
+        persistSessionDraft(chatId, session);
         return await checkAndPrompt(chatId, session);
     }
 
@@ -1333,6 +1555,7 @@ const processMessage = async (chatId, text, session) => {
             await sendMessage(chatId, `⚠️ Saved socials, but still need a *Context Link* (any source URL).`);
         }
 
+        persistSessionDraft(chatId, session);
         return await checkAndPrompt(chatId, session);
     }
 
@@ -1352,6 +1575,7 @@ const processMessage = async (chatId, text, session) => {
         case 'wizard_name':
             session.token.name = String(text || '');
             session.state = 'wizard_symbol';
+            persistSessionDraft(chatId, session);
             return await sendButtons(chatId, `
 Name: ${renderFieldValue(session.token.name, '`(empty)`')}
 
@@ -1364,6 +1588,7 @@ What's the ticker? (e.g., PEPE)
         case 'wizard_symbol':
             session.token.symbol = String(text || '');
             session.state = 'wizard_fees';
+            persistSessionDraft(chatId, session);
             return await sendButtons(chatId, `
 Symbol: ${renderFieldValue(session.token.symbol, '`(empty)`')}
 
@@ -1387,6 +1612,7 @@ _Examples: 6%, 600bps, 3% 3%_
                 session.token.fees = fees;
             }
             session.state = 'wizard_image';
+            persistSessionDraft(chatId, session);
             await sendMessage(chatId, `Fees: *${(session.token.fees.clankerFee + session.token.fees.pairedFee) / 100}%*`);
             return await sendWizardImagePrompt(chatId);
 
@@ -1401,6 +1627,7 @@ _Examples: 6%, 600bps, 3% 3%_
                 if (nlParsed.context) session.token.context = nlParsed.context;
 
                 session.state = 'collecting';
+                persistSessionDraft(chatId, session);
 
                 const totalFee = (session.token.fees?.clankerFee + session.token.fees?.pairedFee) / 100 || 6;
 
@@ -1418,6 +1645,7 @@ Continue in *Settings*, or deploy from the panel.
                 sendMessage,
                 resetSession
             });
+            persistSessionDraft(chatId, session);
             return await showControlPanel(chatId, session, '*Control Panel*');
 
         default:
@@ -1435,9 +1663,10 @@ const processPhoto = async (chatId, photo, session, preResolvedFileUrl = null) =
 *IPFS Not Configured*
 
 Add one of these to .env:
-• \`NFT_STORAGE_TOKEN=...\` (FREE at nft.storage)
-• \`PINATA_API_KEY=...\` + \`PINATA_SECRET_KEY=...\`
-• \`INFURA_PROJECT_ID=...\`
+• \`IPFS_KUBO_API=http://127.0.0.1:5001\` (no API key, own node)
+• \`PINATA_API_KEY=...\` + \`PINATA_SECRET_KEY=...\` (recommended)
+• Legacy only: \`INFURA_PROJECT_ID\` + \`INFURA_SECRET\` + \`ENABLE_INFURA_IPFS_LEGACY=true\`
+• Legacy only: \`NFT_STORAGE_TOKEN\` + \`ENABLE_NFT_STORAGE_CLASSIC=true\`
 
 Or paste an existing IPFS CID.
         `.trim());
@@ -1475,6 +1704,7 @@ Or paste an existing IPFS CID.
     } else if (session.state === 'wizard_image') {
         session.state = 'wizard_context';
     }
+    persistSessionDraft(chatId, session);
 
     await editMessage(chatId, statusMsg?.result?.message_id, `*Image uploaded*\nCID: \`${result.cid}\``);
 
@@ -1495,6 +1725,7 @@ Or paste an existing IPFS CID.
 };
 
 const checkAndPrompt = async (chatId, session) => {
+    persistSessionDraft(chatId, session);
     const status = getReadyStatus(session.token);
 
     if (status.ready) {
@@ -1616,6 +1847,11 @@ ${t.spoofTo ? '\n\n🎭 Rewards routed to stealth address.' : ''}
         console.error('ExecuteDeploy Error:', error);
         await editMessage(chatId, statusMsg?.result?.message_id, `❌ *Error:* ${error.message}`);
     } finally {
+        try {
+            configStore.savePreset(chatId, 'last-used', cloneTokenDraft(session.token));
+        } catch (error) {
+            console.error('Preset autosave warning:', error.message);
+        }
         // Always reset session after attempt
         const freshSession = resetSession(chatId);
         try {
@@ -1683,6 +1919,15 @@ const handleUpdate = async (update) => {
             case '/status': return handleStatus(chatId);
             case '/health': return handleHealth(chatId);
             case '/config': return handleConfig(chatId);
+            case '/profiles': return handleProfiles(chatId);
+            case '/save':
+            case '/savepreset':
+                return handleSavePreset(chatId, args);
+            case '/load':
+                return handleLoadPreset(chatId, args);
+            case '/deletepreset':
+            case '/delpreset':
+                return handleDeletePreset(chatId, args);
             case '/deploy': return handleDeploy(chatId);
             case '/cancel': return handleCancel(chatId);
             case '/spoof': return handleSpoof(chatId, args);
@@ -1832,16 +2077,15 @@ const main = async () => {
     // Status checks
     const pkCheck = validatePrivateKey();
     const ipfsStatus = getProviderStatus();
+    const storeStats = configStore.getStats();
 
-    let ipfsProviders = [];
-    if (ipfsStatus.nftStorage) ipfsProviders.push('NFT.Storage');
-    if (ipfsStatus.pinata) ipfsProviders.push('Pinata');
-    if (ipfsStatus.infura) ipfsProviders.push('Infura');
+    const ipfsProviders = listEnabledIpfsProviders(ipfsStatus);
 
     console.log(`✅ Bot: @${me.result.username}`);
     console.log(`${pkCheck.valid ? '✅' : '❌'} Wallet: ${pkCheck.valid ? 'Ready' : pkCheck.error}`);
     console.log(`${ipfsStatus.any ? '✅' : '⚠️'} IPFS: ${ipfsProviders.length > 0 ? ipfsProviders.join(', ') : 'Not configured'}`);
     console.log(`📍 Admins: ${ADMIN_CHAT_IDS.length > 0 ? ADMIN_CHAT_IDS.join(', ') : 'All allowed'}`);
+    console.log(`💾 Config DB: ${storeStats.path} (${storeStats.users} chats, ${storeStats.presets} presets)`);
     console.log(`🌐 Telegram API: ${TELEGRAM_API_ORIGINS.join(' | ')}`);
     if (TELEGRAM_FILE_BASE) {
         console.log(`🌐 Telegram File Base: ${TELEGRAM_FILE_BASE}`);

@@ -7,9 +7,10 @@ import { spawnSync } from 'node:child_process';
 
 import { validateConfig } from '../lib/validator.js';
 import { createConfigFromSession, loadConfig, loadTokenConfig } from '../lib/config.js';
-import { processImageInput } from '../lib/ipfs.js';
+import { processImageInput, getProviderStatus } from '../lib/ipfs.js';
 import { parseSmartSocialInput } from '../lib/social-parser.js';
 import { parseTokenCommand } from '../lib/parser.js';
+import { ConfigStore } from '../lib/config-store.js';
 
 const baseConfig = () => ({
     name: 'Alpha Token',
@@ -19,6 +20,59 @@ const baseConfig = () => ({
     fees: { type: 'static', clankerFee: 250, pairedFee: 250 },
     context: { platform: 'twitter', messageId: '123456' },
     metadata: { socialMediaUrls: [{ platform: 'x', url: 'https://x.com/alpha' }], auditUrls: [] }
+});
+
+test('ConfigStore persists draft and presets on disk', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-config-store-'));
+    const storePath = path.join(tmpDir, 'store.json');
+    const store = new ConfigStore(storePath);
+
+    const tokenDraft = {
+        name: 'Persisted Token',
+        symbol: 'PST',
+        image: 'bafkreigh2akiscaildc3exampleexampleexampleexampleexample',
+        description: 'persist me',
+        fees: { clankerFee: 300, pairedFee: 300 },
+        context: { platform: 'twitter', messageId: '123' },
+        socials: { x: 'https://x.com/pst' },
+        spoofTo: null
+    };
+
+    try {
+        store.saveDraft('1001', tokenDraft);
+        store.savePreset('1001', 'default', tokenDraft);
+
+        const draft = store.getDraft('1001');
+        assert.equal(draft.name, 'Persisted Token');
+        assert.equal(draft.fees.clankerFee, 300);
+
+        const preset = store.loadPreset('1001', 'default');
+        assert.equal(preset?.token?.symbol, 'PST');
+
+        const stats = store.getStats();
+        assert.equal(stats.users, 1);
+        assert.equal(stats.presets, 1);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('ConfigStore supports case-insensitive preset lookup and deletion', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-config-store-case-'));
+    const storePath = path.join(tmpDir, 'store.json');
+    const store = new ConfigStore(storePath);
+
+    try {
+        store.savePreset('42', 'MyPreset', { symbol: 'MYP' });
+        const loaded = store.loadPreset('42', 'mypreset');
+        assert.equal(loaded?.name, 'MyPreset');
+
+        const deleted = store.deletePreset('42', 'MYPRESET');
+        assert.equal(deleted, true);
+        assert.equal(store.loadPreset('42', 'mypreset'), null);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
 });
 
 test('validateConfig keeps symbol text as provided', () => {
@@ -472,6 +526,51 @@ test('processImageInput returns gatewayUrls for existing CID and respects IPFS_G
             delete process.env.IPFS_GATEWAYS;
         } else {
             process.env.IPFS_GATEWAYS = prev;
+        }
+    }
+});
+
+test('processImageInput rejects non-string/non-buffer inputs', async () => {
+    const result = await processImageInput({ bad: true });
+    assert.equal(result.success, false);
+    assert.match(String(result.error), /string URL\/path\/CID or Buffer/);
+});
+
+test('getProviderStatus reflects local Kubo and legacy provider flags correctly', () => {
+    const keys = [
+        'IPFS_KUBO_API',
+        'PINATA_API_KEY',
+        'PINATA_SECRET_KEY',
+        'INFURA_PROJECT_ID',
+        'INFURA_SECRET',
+        'NFT_STORAGE_TOKEN',
+        'ENABLE_INFURA_IPFS_LEGACY',
+        'ENABLE_NFT_STORAGE_CLASSIC'
+    ];
+    const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+
+    process.env.IPFS_KUBO_API = 'http://127.0.0.1:5001';
+    process.env.INFURA_PROJECT_ID = 'abc123';
+    process.env.INFURA_SECRET = 'secret123';
+    process.env.NFT_STORAGE_TOKEN = 'token123';
+    process.env.ENABLE_INFURA_IPFS_LEGACY = 'false';
+    process.env.ENABLE_NFT_STORAGE_CLASSIC = 'false';
+    delete process.env.PINATA_API_KEY;
+    delete process.env.PINATA_SECRET_KEY;
+
+    try {
+        const status = getProviderStatus();
+        assert.equal(status.kuboLocal, true);
+        assert.equal(status.pinata, false);
+        assert.equal(status.infura, false);
+        assert.equal(status.nftStorage, false);
+        assert.equal(status.infuraLegacyConfigured, true);
+        assert.equal(status.nftStorageLegacyConfigured, true);
+        assert.equal(status.any, true);
+    } finally {
+        for (const k of keys) {
+            if (prev[k] === undefined) delete process.env[k];
+            else process.env[k] = prev[k];
         }
     }
 });

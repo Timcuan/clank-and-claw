@@ -49,6 +49,9 @@ sequenceDiagram
     Admin->>Mgr: clawctl telegram-setup
     Mgr->>Mgr: Validate TELEGRAM_BOT_TOKEN via getMe
 
+    Admin->>Mgr: clawctl ipfs-setup
+    Mgr->>Mgr: Configure IPFS upload backend (Kubo/Pinata/legacy)
+
     Admin->>Mgr: clawctl doctor
     Mgr->>Mgr: Check token, key, RPC, IPFS, PM2
 
@@ -93,6 +96,7 @@ flowchart TD
     ST --> SC[Set Context Link]
     ST --> SI[Set Image]
     ST --> SP[Set Spoof]
+    ST --> PR[Profiles]
     ST --> FB[Fallback Tools]
 
     DP --> CF[Confirm Deploy]
@@ -124,6 +128,9 @@ flowchart TD
 | `menu_context` | URL | `collecting` | platform auto-detected |
 | `menu_image` | photo/URL/CID | `collecting` | only state where manual image input is valid |
 | `menu_spoof` | `0x...` or `off` | `collecting` | toggles spoof mode |
+| `menu_profile_save` | preset name | `collecting` | save current config preset |
+| `menu_profile_load` | preset name | `collecting` | load saved config preset |
+| `menu_profile_delete` | preset name | `collecting` | delete saved config preset |
 | `wizard_name` | any text | `wizard_symbol` | guided flow |
 | `wizard_symbol` | any text | `wizard_fees` | guided flow |
 | `wizard_fees` | preset/button/custom text | `wizard_image` | default can be 6% |
@@ -214,6 +221,7 @@ sequenceDiagram
 | Interactive all-in-one menu | `~/clawctl wizard` |
 | Full preflight diagnostic | `~/clawctl doctor` |
 | Setup Telegram token/admin | `~/clawctl telegram-setup` |
+| Setup IPFS upload backend | `~/clawctl ipfs-setup` |
 | Start bot | `~/clawctl start` |
 | Stop bot | `~/clawctl stop` |
 | Restart bot | `~/clawctl restart` |
@@ -229,9 +237,10 @@ sequenceDiagram
 
 1. `~/clawctl doctor` returns no critical errors.
 2. `.env` has valid `TELEGRAM_BOT_TOKEN` and `PRIVATE_KEY`.
-3. `RPC_URL` and at least one fallback RPC are reachable.
-4. `SMART_VALIDATION` and context policy match your deployment style.
-5. Bot runs as single PM2 instance only.
+3. IPFS upload backend active (`IPFS_KUBO_API` or Pinata keys).
+4. `RPC_URL` and at least one fallback RPC are reachable.
+5. `SMART_VALIDATION` and context policy match your deployment style.
+6. Bot runs as single PM2 instance only.
 
 ## 12. Post-Deploy Checklist
 

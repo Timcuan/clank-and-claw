@@ -127,6 +127,7 @@ Direct manager commands:
 ```bash
 ~/clawctl doctor
 ~/clawctl telegram-setup
+~/clawctl ipfs-setup
 ~/clawctl start
 ~/clawctl status
 ~/clawctl update
@@ -145,6 +146,10 @@ Other commands:
 - `/go <SYMBOL> "<NAME>" <FEES>` quick setup
 - `/spoof <ADDRESS>` enable spoof
 - `/spoof off` disable spoof
+- `/profiles` manage saved config presets
+- `/save <name>` save current config preset
+- `/load <name>` load saved preset
+- `/deletepreset <name>` delete preset
 - `/status` wallet/runtime check
 - `/health` deep health checks (Telegram origins + RPC endpoints)
 - `/cancel` reset session
@@ -192,6 +197,51 @@ DEFAULT_CONTEXT_ID=<valid_post_or_cast_id>
 DEFAULT_IMAGE_URL=
 ```
 
+## IPFS Upload Backend (Telegram Image -> CID)
+
+Configure at least one upload backend:
+Runtime priority is fixed: **Local Kubo -> Pinata -> legacy providers**.
+
+1. Local Kubo node (no API key, recommended self-hosted):
+```env
+IPFS_KUBO_API=http://127.0.0.1:5001
+```
+
+2. Pinata (recommended hosted):
+```env
+PINATA_API_KEY=...
+PINATA_SECRET_KEY=...
+```
+
+Legacy backends (disabled by default, enable explicitly):
+```env
+INFURA_PROJECT_ID=...
+INFURA_SECRET=...
+ENABLE_INFURA_IPFS_LEGACY=true
+
+NFT_STORAGE_TOKEN=...
+ENABLE_NFT_STORAGE_CLASSIC=true
+```
+
+Interactive setup on VPS:
+```bash
+~/clawctl ipfs-setup
+```
+
+## Persistent Config Store (Built-in Local DB)
+
+Telegram bot now stores:
+- Auto-saved draft per chat (survives restart)
+- Named presets per chat (`/save`, `/load`, `/deletepreset`)
+
+Default file path:
+```env
+CONFIG_STORE_PATH=./data/bot-config-store.json
+```
+
+No external database is required for single-instance VPS operation.
+For multi-instance/HA deployment, move to shared storage (e.g. PostgreSQL/Redis) in a later phase.
+
 ## Common Incidents
 
 ### Invalid bot token (`Unauthorized`)
@@ -216,6 +266,13 @@ Do not keep placeholder token values in `.env`.
 2. `~/clawctl netcheck`
 3. Add/verify `RPC_FALLBACK_URLS`
 4. Restart bot
+
+### Image upload fails / CID not generated
+
+1. `~/clawctl ipfs-setup`
+2. `~/clawctl doctor` (must show active IPFS upload backend)
+3. If using local Kubo, ensure daemon is running and `IPFS_KUBO_API` reachable.
+4. Retry sending image in `/a -> Settings -> Image`.
 
 ## Project Map
 

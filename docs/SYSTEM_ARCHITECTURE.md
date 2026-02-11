@@ -21,6 +21,7 @@ flowchart LR
 
     TG --> IPFS[lib/ipfs.js]
     TG --> SES[lib/session-manager.js]
+    TG --> CST[lib/config-store.js]
 
     CORE --> SDK[Clanker SDK]
     CORE --> RPCP[Primary RPC]
@@ -147,6 +148,7 @@ flowchart TD
 
 `vps-manager.sh` provides operational lifecycle commands:
 - `doctor`: preflight health gate
+- `telegram-setup` / `ipfs-setup`: guided credential/backend setup
 - `start/stop/restart/status/logs`
 - `update`: git pull + deps + tests + restart
 - `heal`: recover from lock/process/webhook conflicts
@@ -197,4 +199,3 @@ IPFS_GATEWAYS=<gateway1>,<gateway2>
 - Operator flow and runbook: `docs/VISUAL_FLOW_RUNBOOK.md`
 - Token parameter reference: `TOKEN_CONFIG_GUIDE.md`
 - Release timeline: `RELEASES.md`
-

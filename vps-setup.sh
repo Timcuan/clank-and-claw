@@ -216,10 +216,11 @@ check "DNS resolve mainnet.base.org" "getent hosts mainnet.base.org"
 check "Telegram API health" "curl -fsS --max-time 8 https://api.telegram.org"
 check "Base RPC health" "curl -fsS --max-time 8 -H 'content-type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]}' https://mainnet.base.org"
 check "Gateway pinata" "curl -fsS --max-time 8 https://gateway.pinata.cloud/ipfs"
+check "Local Kubo API (optional)" "curl -fsS --max-time 5 http://127.0.0.1:5001/api/v0/version"
 
 echo ""
 echo "Tips:"
-echo "- Verify .env: RPC_URL / RPC_FALLBACK_URLS / TELEGRAM_API_BASES / IPFS_GATEWAYS / REQUIRE_CONTEXT / SMART_VALIDATION"
+echo "- Verify .env: RPC_URL / RPC_FALLBACK_URLS / TELEGRAM_API_BASES / IPFS_GATEWAYS / CONFIG_STORE_PATH / REQUIRE_CONTEXT / SMART_VALIDATION"
 echo "- If DNS unstable: sudo systemctl restart systemd-resolved"
 echo "- Use PM2 logs: pm2 logs clanker-bot"
 EOF
@@ -272,6 +273,13 @@ set -euo pipefail
 EOF
 chmod +x ~/bot-setup.sh
 
+cat > ~/ipfs-setup.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+~/clawctl ipfs-setup "$@"
+EOF
+chmod +x ~/ipfs-setup.sh
+
 cat > ~/bot-stop.sh << 'EOF'
 #!/bin/bash
 set -euo pipefail
@@ -312,6 +320,7 @@ echo "🌐 Running quick network preflight..."
 check_endpoint "https://api.telegram.org" "Telegram API"
 check_endpoint "https://mainnet.base.org" "Base RPC"
 check_endpoint "https://gateway.pinata.cloud/ipfs" "IPFS Gateway"
+check_endpoint "http://127.0.0.1:5001/api/v0/version" "Local Kubo API (optional)"
 
 # ─────────────────────────────────────────
 # Done!
@@ -327,12 +336,14 @@ echo "🚀 Quick Commands:"
 echo "   ~/clawctl wizard               # All-in-one install/update/uninstall wizard"
 echo "   ~/clawctl doctor               # Preflight check (token/key/rpc/ipfs/pm2)"
 echo "   ~/clawctl telegram-setup       # Setup + validate Telegram token"
+echo "   ~/clawctl ipfs-setup           # Setup IPFS upload backend (Kubo/Pinata/legacy)"
 echo "   ~/claw-update.sh               # Safe update: git + npm + tests + restart"
 echo "   ~/claw-doctor.sh               # Shortcut doctor check"
 echo "   ~/claw-uninstall.sh            # Clean uninstall (with backup)"
 echo "   ~/deploy-token.sh              # Deploy from .env"
 echo "   ~/openclaw.sh --file input.json # Deploy from JSON"
 echo "   ~/bot-setup.sh                 # Setup + validate Telegram bot token"
+echo "   ~/ipfs-setup.sh                # Setup IPFS upload backend"
 echo "   ~/bot-start.sh                 # Start bot with PM2 (recommended)"
 echo "   ~/bot-stop.sh                  # Stop PM2 bot"
 echo "   ~/bot-status.sh                # Check bot status"

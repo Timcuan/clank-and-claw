@@ -75,6 +75,53 @@ test('ConfigStore supports case-insensitive preset lookup and deletion', () => {
     }
 });
 
+test('ConfigStore avoids redundant disk writes for unchanged draft', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-config-store-write-'));
+    const storePath = path.join(tmpDir, 'store.json');
+    const store = new ConfigStore(storePath);
+    const tokenDraft = {
+        name: 'No Rewrite',
+        symbol: 'NRW',
+        fees: { clankerFee: 300, pairedFee: 300 }
+    };
+    let writes = 0;
+    const originalWrite = store._write.bind(store);
+    store._write = () => {
+        writes++;
+        return originalWrite();
+    };
+
+    try {
+        store.saveDraft('777', tokenDraft);
+        store.saveDraft('777', tokenDraft);
+        assert.equal(writes, 1);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('ConfigStore clearDraft is no-op when draft is already empty', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-config-store-clear-'));
+    const storePath = path.join(tmpDir, 'store.json');
+    const store = new ConfigStore(storePath);
+    let writes = 0;
+    const originalWrite = store._write.bind(store);
+    store._write = () => {
+        writes++;
+        return originalWrite();
+    };
+
+    try {
+        assert.equal(store.clearDraft('404'), false);
+        store.saveDraft('404', { symbol: 'CLR' });
+        assert.equal(store.clearDraft('404'), true);
+        assert.equal(store.clearDraft('404'), false);
+        assert.equal(writes, 2);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('validateConfig keeps symbol text as provided', () => {
     const config = baseConfig();
     config.symbol = 'alpHa1-_@#';

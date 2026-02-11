@@ -5,6 +5,10 @@ import { validateConfig } from './lib/validator.js';
 import 'dotenv/config';
 import fs from 'fs';
 
+const ETH_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
+const PRIVATE_KEY_REGEX = /^0x[a-fA-F0-9]{64}$/;
+const DEFAULT_TOKEN_FILE = 'token.json';
+
 /**
  * 🚀 CLI Token Deployment Agent
  * 
@@ -17,22 +21,83 @@ import fs from 'fs';
  *   node deploy.js <file.json>  # Use specific config
  */
 
-const parseArgs = () => {
-    const args = process.argv.slice(2);
+const printUsage = () => {
+    console.log(`Usage:
+  node deploy.js [options] [file.json]
+
+Options:
+  --env, -e        Load config from .env
+  --spoof <addr>   Override spoof target address (0x...)
+  --strict         Enable strict verification mode
+  --help, -h       Show this help message
+
+Examples:
+  node deploy.js
+  node deploy.js token.json
+  node deploy.js --env
+  node deploy.js --spoof 0x1234...abcd`);
+};
+
+const parseArgs = (args = process.argv.slice(2)) => {
     const options = {
         file: null,
         spoof: null,
         strict: false,
-        env: false
+        env: false,
+        help: false
     };
 
     for (let i = 0; i < args.length; i++) {
-        if (args[i] === '--env' || args[i] === '-e') options.env = true;
-        else if (args[i] === '--strict') options.strict = true;
-        else if (args[i] === '--spoof') options.spoof = args[++i];
-        else if (args[i].endsWith('.json')) options.file = args[i];
+        const arg = args[i];
+        if (arg === '--env' || arg === '-e') {
+            options.env = true;
+            continue;
+        }
+        if (arg === '--strict') {
+            options.strict = true;
+            continue;
+        }
+        if (arg === '--help' || arg === '-h') {
+            options.help = true;
+            continue;
+        }
+        if (arg === '--spoof') {
+            const spoofValue = args[i + 1];
+            if (!spoofValue || spoofValue.startsWith('-')) {
+                throw new Error('--spoof requires an address value');
+            }
+            options.spoof = spoofValue;
+            i++;
+            continue;
+        }
+        if (arg.endsWith('.json')) {
+            if (options.file) {
+                throw new Error(`Multiple JSON config files provided: ${options.file}, ${arg}`);
+            }
+            options.file = arg;
+            continue;
+        }
+        if (arg.startsWith('-')) {
+            throw new Error(`Unknown option: ${arg}`);
+        }
+        throw new Error(`Unknown argument: ${arg}`);
     }
+
+    if (options.env && options.file) {
+        throw new Error('Cannot combine --env with JSON config file input');
+    }
+
     return options;
+};
+
+const normalizePrivateKey = (rawPrivateKey) => {
+    const trimmed = String(rawPrivateKey || '').trim();
+    if (!trimmed) return null;
+    const normalized = trimmed.startsWith('0x') ? trimmed : `0x${trimmed}`;
+    if (!PRIVATE_KEY_REGEX.test(normalized)) {
+        throw new Error('Invalid PRIVATE_KEY format (expected 32-byte hex)');
+    }
+    return normalized;
 };
 
 const printPreflight = (config) => {
@@ -61,9 +126,16 @@ async function main() {
 
     try {
         const opts = parseArgs();
+        if (opts.help) {
+            printUsage();
+            return;
+        }
 
         // 1. Env Overrides
         if (opts.spoof) {
+            if (!ETH_ADDRESS_REGEX.test(opts.spoof)) {
+                throw new Error('--spoof must be a valid 0x Ethereum address');
+            }
             process.env.ADMIN_SPOOF = opts.spoof;
         }
 
@@ -74,17 +146,19 @@ async function main() {
         if (opts.env) {
             sourceLabel = '.env (Legacy)';
             config = loadConfig();
-        } else {
-            const fileToLoad = opts.file || (fs.existsSync('token.json') ? 'token.json' : null);
-
-            if (fileToLoad && fs.existsSync(fileToLoad)) {
-                sourceLabel = fileToLoad;
-                config = loadTokenConfig(fileToLoad);
-            } else {
-                sourceLabel = '.env (Fallback)';
-                console.log('⚠️ No token.json found. Falling back to .env');
-                config = loadConfig();
+        } else if (opts.file) {
+            if (!fs.existsSync(opts.file)) {
+                throw new Error(`Token config file not found: ${opts.file}`);
             }
+            sourceLabel = opts.file;
+            config = loadTokenConfig(opts.file);
+        } else if (fs.existsSync(DEFAULT_TOKEN_FILE)) {
+            sourceLabel = DEFAULT_TOKEN_FILE;
+            config = loadTokenConfig(DEFAULT_TOKEN_FILE);
+        } else {
+            sourceLabel = '.env (Fallback)';
+            console.log(`⚠️ No ${DEFAULT_TOKEN_FILE} found. Falling back to .env`);
+            config = loadConfig();
         }
         console.log(`📄 \x1b[33mSource:\x1b[0m \x1b[1m${sourceLabel}\x1b[0m`);
 
@@ -95,10 +169,14 @@ async function main() {
 
             // Re-calculate rewards for spoofing
             // We need 99.9% to us, 0.1% to spoof target
-            const pk = process.env.PRIVATE_KEY;
-            const ourWallet = privateKeyToAccount(pk.startsWith('0x') ? pk : `0x${pk}`).address;
+            const pk = normalizePrivateKey(process.env.PRIVATE_KEY);
+            if (!pk) {
+                throw new Error('--spoof requires PRIVATE_KEY in environment');
+            }
+            const ourWallet = privateKeyToAccount(pk).address;
             const spoofTo = opts.spoof;
 
+            config._meta = config._meta || {};
             config._meta.rewardRecipient = spoofTo;
             config.tokenAdmin = spoofTo; // Make them admin so they appear as deployer
 
@@ -119,10 +197,14 @@ async function main() {
 
         if (opts.strict) {
             console.log('🛡️ \x1b[32mStrict Mode:\x1b[0m Enabled (Blue Badge Verify)');
-            const strictReason = config.fees.clankerFee + config.fees.pairedFee > 500 ? 'High Fees' : 'OK';
+            const staticFeeTotal = config?.fees?.type === 'static'
+                ? (Number(config?.fees?.clankerFee || 0) + Number(config?.fees?.pairedFee || 0))
+                : 0;
+            const strictReason = staticFeeTotal > 500 ? 'High Fees' : 'OK';
             if (strictReason === 'High Fees') {
                 console.warn('⚠️ Warning: Strict mode enabled but fees are > 5%. Badge verification will fail.');
             }
+            config._meta = config._meta || {};
             config._meta.strictMode = true;
         }
 

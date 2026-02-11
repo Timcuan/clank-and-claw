@@ -229,6 +229,14 @@ sequenceDiagram
 3. Set multiple `RPC_FALLBACK_URLS` in `.env`.
 4. Restart bot and re-check logs.
 
+### 9.4 Kubo API unreachable
+
+1. Run `~/clawctl kubo-status` and inspect the latest service logs.
+2. Verify API manually (no proxy):
+   `curl --noproxy '*' -sS -X POST --data '' http://127.0.0.1:5001/api/v0/version`
+3. If API still fails, run `~/clawctl kubo-install --force`.
+4. Re-run `~/clawctl doctor`.
+
 ## 10. VPS Command Reference
 
 | Goal | Command |

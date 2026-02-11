@@ -16,6 +16,7 @@ All entry points share one canonical pipeline:
 
 Start here based on your role:
 - Operator runbook (visual flow + troubleshooting): `docs/VISUAL_FLOW_RUNBOOK.md`
+- VPS install + repair SOP (copy-paste): `docs/VPS_INSTALL_REPAIR_SOP.md`
 - System architecture (component-level): `docs/SYSTEM_ARCHITECTURE.md`
 - Token config reference (`token.json`): `TOKEN_CONFIG_GUIDE.md`
 - Release history: `RELEASES.md`
@@ -110,6 +111,9 @@ npm run test:ci
 ```
 
 ## VPS Production Workflow
+
+SOP lengkap install + repair:
+- `docs/VPS_INSTALL_REPAIR_SOP.md`
 
 Bootstrap VPS terlebih dulu (wajib sebelum pakai `~/clawctl`):
 

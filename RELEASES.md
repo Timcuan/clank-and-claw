@@ -34,6 +34,7 @@
 - **Bootstrap Docs Sync**: README/runbook now include explicit VPS bootstrap command and shortcut-repair guidance.
 - **Shortcut Repair Expanded**: `vps-manager.sh shortcuts` now also repairs `deploy-token`, `openclaw`, and `claw-netcheck`.
 - **Kubo Auto-Recovery + Debug**: Kubo lifecycle commands now try repo-permission/service repair automatically and print debug snapshot (systemd + journal + API probe) on failure.
+- **Step-by-Step SOP Added**: Added `docs/VPS_INSTALL_REPAIR_SOP.md` for clear install and repair execution flow.
 
 ---
 *Date: February 11, 2026*

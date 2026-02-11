@@ -67,12 +67,27 @@ else
 fi
 
 cd "${PROJECT_DIR}"
+chmod +x ./vps-manager.sh 2>/dev/null || true
 
 # ─────────────────────────────────────────
 # 5. Install NPM Dependencies
 # ─────────────────────────────────────────
 echo "📦 Installing NPM dependencies..."
 npm install --omit=dev
+
+# ─────────────────────────────────────────
+# 5.5 Install PM2 (recommended bot runtime)
+# ─────────────────────────────────────────
+echo "🧰 Ensuring PM2 is installed..."
+if ! command -v pm2 >/dev/null 2>&1; then
+    if [ -n "$SUDO" ]; then
+        $SUDO npm install -g pm2
+    else
+        npm install -g pm2
+    fi
+else
+    echo "✅ PM2 already installed: $(pm2 -v)"
+fi
 
 # ─────────────────────────────────────────
 # 6. Setup Environment
@@ -141,6 +156,36 @@ node openclaw-handler.js "$@"
 EOF
 chmod +x ~/openclaw.sh
 
+# Unified manager launcher
+cat > ~/clawctl << 'EOF'
+#!/bin/bash
+set -euo pipefail
+cd ~/clank-and-claw
+bash ./vps-manager.sh "$@"
+EOF
+chmod +x ~/clawctl
+
+cat > ~/claw-wizard.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+~/clawctl wizard
+EOF
+chmod +x ~/claw-wizard.sh
+
+cat > ~/claw-update.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+~/clawctl update "$@"
+EOF
+chmod +x ~/claw-update.sh
+
+cat > ~/claw-uninstall.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+~/clawctl uninstall "$@"
+EOF
+chmod +x ~/claw-uninstall.sh
+
 # Network diagnostics helper
 cat > ~/claw-netcheck.sh << 'EOF'
 #!/bin/bash
@@ -176,7 +221,25 @@ chmod +x ~/claw-netcheck.sh
 # Telegram bot runner
 cat > ~/run-bot.sh << 'EOF'
 #!/bin/bash
+set -euo pipefail
 cd ~/clank-and-claw
+
+if pgrep -fa "node .*telegram-bot.js" >/dev/null 2>&1; then
+  echo "❌ Bot sudah jalan di proses lain."
+  echo "   Hentikan dulu proses lama supaya tidak conflict getUpdates."
+  echo "   Cek: pgrep -fa 'telegram-bot.js'"
+  exit 1
+fi
+
+if command -v pm2 >/dev/null 2>&1; then
+  PM2_PID="$(pm2 pid clanker-bot 2>/dev/null | tr -d '[:space:]' || true)"
+  if [ -n "${PM2_PID}" ] && [ "${PM2_PID}" != "0" ]; then
+    echo "❌ clanker-bot sedang aktif di PM2 (PID ${PM2_PID})."
+    echo "   Gunakan: ~/bot-stop.sh  atau  pm2 stop clanker-bot"
+    exit 1
+  fi
+fi
+
 if [ -x ~/claw-netcheck.sh ]; then
   ~/claw-netcheck.sh || true
 fi
@@ -185,6 +248,77 @@ echo "   Press Ctrl+C to stop"
 node telegram-bot.js
 EOF
 chmod +x ~/run-bot.sh
+
+# PM2 start helper (recommended)
+cat > ~/bot-start.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+cd ~/clank-and-claw
+
+if [ ! -f ".env" ]; then
+  echo "❌ .env not found in ~/clank-and-claw"
+  exit 1
+fi
+
+if ! command -v pm2 >/dev/null 2>&1; then
+  echo "❌ pm2 not installed"
+  exit 1
+fi
+
+if pm2 describe clanker-bot >/dev/null 2>&1; then
+  pm2 restart clanker-bot --update-env
+else
+  pm2 start ecosystem.config.cjs --only clanker-bot --update-env
+fi
+
+pm2 save
+pm2 status clanker-bot
+EOF
+chmod +x ~/bot-start.sh
+
+cat > ~/bot-stop.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+if ! command -v pm2 >/dev/null 2>&1; then
+  echo "pm2 not installed"
+  exit 0
+fi
+pm2 stop clanker-bot || true
+pm2 delete clanker-bot || true
+pm2 save || true
+echo "✅ clanker-bot stopped"
+EOF
+chmod +x ~/bot-stop.sh
+
+cat > ~/bot-status.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+if command -v pm2 >/dev/null 2>&1; then
+  pm2 status clanker-bot || true
+fi
+echo ""
+echo "Process check:"
+pgrep -fa "node .*telegram-bot.js" || echo "No direct telegram-bot.js process found"
+EOF
+chmod +x ~/bot-status.sh
+
+cat > ~/bot-enable-autostart.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+if ! command -v pm2 >/dev/null 2>&1; then
+  echo "❌ pm2 not installed"
+  exit 1
+fi
+
+pm2 save
+if pm2 startup systemd -u "$(whoami)" --hp "$HOME"; then
+  echo "✅ PM2 startup configured"
+else
+  echo "⚠️  Jalankan command startup PM2 yang ditampilkan di atas (biasanya pakai sudo), lalu:"
+  echo "    pm2 save"
+fi
+EOF
+chmod +x ~/bot-enable-autostart.sh
 
 # Ensure log directory exists for PM2 ecosystem
 mkdir -p ~/clank-and-claw/logs
@@ -206,14 +340,22 @@ echo ""
 echo "📁 Project: ~/clank-and-claw"
 echo ""
 echo "🚀 Quick Commands:"
+echo "   ~/clawctl wizard               # All-in-one install/update/uninstall wizard"
+echo "   ~/claw-update.sh               # Safe update: git + npm + tests + restart"
+echo "   ~/claw-uninstall.sh            # Clean uninstall (with backup)"
 echo "   ~/deploy-token.sh              # Deploy from .env"
 echo "   ~/openclaw.sh --file input.json # Deploy from JSON"
-echo "   ~/run-bot.sh                   # Start Telegram bot"
+echo "   ~/bot-start.sh                 # Start bot with PM2 (recommended)"
+echo "   ~/bot-stop.sh                  # Stop PM2 bot"
+echo "   ~/bot-status.sh                # Check bot status"
+echo "   ~/bot-enable-autostart.sh      # Enable PM2 auto-start on reboot"
+echo "   ~/run-bot.sh                   # Start direct (manual, no PM2)"
 echo "   ~/claw-netcheck.sh             # Diagnose VPS network/DNS/gateway"
 echo ""
 echo "🤖 Telegram Bot Setup:"
 echo "   1. nano ~/clank-and-claw/.env  # Add TELEGRAM_BOT_TOKEN"
-echo "   2. ~/run-bot.sh"
+echo "   2. ~/bot-start.sh"
+echo "   3. pm2 logs clanker-bot"
 echo ""
 echo "💡 Use tmux for persistent sessions:"
 echo "   tmux new -s claw"

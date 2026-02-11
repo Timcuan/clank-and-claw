@@ -15,6 +15,9 @@
 
 import 'dotenv/config';
 import https from 'https';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { processImageInput, isIPFSCid, getProviderStatus } from './lib/ipfs.js';
 import { parseTokenCommand, parseFees } from './lib/parser.js';
 import { parseSmartSocialInput } from './lib/social-parser.js';
@@ -40,6 +43,12 @@ const DEFAULT_RPC_URL = 'https://mainnet.base.org';
 const MESSAGE_NOT_MODIFIED_TEXT = 'message is not modified';
 const TELEGRAM_HEALTH_TIMEOUT_MS = 12000;
 const RPC_HEALTH_TIMEOUT_MS = 10000;
+const TELEGRAM_CONFLICT_BACKOFF_MS = Math.max(5000, Number(process.env.TELEGRAM_CONFLICT_BACKOFF_MS || 30000));
+const TELEGRAM_MAX_CONFLICT_BACKOFF_MS = Math.max(TELEGRAM_CONFLICT_BACKOFF_MS, Number(process.env.TELEGRAM_MAX_CONFLICT_BACKOFF_MS || 300000));
+const BOT_LOCK_FILE = String(
+    process.env.BOT_LOCK_FILE
+    || path.join(os.tmpdir(), `clank-and-claw-${String(process.env.TELEGRAM_BOT_TOKEN || '').slice(0, 16) || 'bot'}.lock`)
+).trim();
 const SPOOF_DISABLE_KEYWORDS = new Set(['off', 'disable', 'none', 'clear', 'reset']);
 const TELEGRAM_HTTP_AGENT = new https.Agent({
     keepAlive: true,
@@ -73,6 +82,68 @@ const buildTelegramFileUrl = (origin, filePath) => {
 };
 
 const formatHealthError = (value) => String(value || 'unknown error').replace(/\s+/g, ' ').trim();
+let botLockFd = null;
+
+const isPidAlive = (pid) => {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try {
+        process.kill(pid, 0);
+        return true;
+    } catch {
+        return false;
+    }
+};
+
+const readLockData = () => {
+    try {
+        const raw = fs.readFileSync(BOT_LOCK_FILE, 'utf8');
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+};
+
+const acquireBotLock = () => {
+    const payload = JSON.stringify({
+        pid: process.pid,
+        startedAt: new Date().toISOString(),
+        hostname: os.hostname(),
+        cwd: process.cwd()
+    });
+
+    const tryCreate = () => {
+        botLockFd = fs.openSync(BOT_LOCK_FILE, 'wx', 0o600);
+        fs.writeFileSync(botLockFd, payload, 'utf8');
+    };
+
+    try {
+        tryCreate();
+        return;
+    } catch (error) {
+        if (error?.code !== 'EEXIST') {
+            throw new Error(`Cannot create lock file (${BOT_LOCK_FILE}): ${error.message}`);
+        }
+    }
+
+    const existing = readLockData();
+    const existingPid = Number(existing?.pid);
+    if (isPidAlive(existingPid)) {
+        throw new Error(`Another bot instance is already running (PID ${existingPid}). Stop it first to avoid getUpdates conflict.`);
+    }
+
+    try { fs.unlinkSync(BOT_LOCK_FILE); } catch { }
+    tryCreate();
+};
+
+const releaseBotLock = () => {
+    if (botLockFd !== null) {
+        try { fs.closeSync(botLockFd); } catch { }
+        botLockFd = null;
+    }
+    try { fs.unlinkSync(BOT_LOCK_FILE); } catch { }
+};
 
 // ═══════════════════════════════════════════
 // TELEGRAM API - Robust Implementation
@@ -1191,6 +1262,12 @@ const handleUpdate = async (update) => {
 
 let lastUpdateId = 0;
 let consecutiveErrors = 0;
+let consecutiveConflicts = 0;
+
+const isGetUpdatesConflictError = (message) => {
+    const normalized = String(message || '').toLowerCase();
+    return normalized.includes('terminated by other getupdates request');
+};
 
 const poll = async () => {
     try {
@@ -1205,6 +1282,7 @@ const poll = async () => {
         }
 
         consecutiveErrors = 0;
+        consecutiveConflicts = 0;
         if (result.result?.length > 0) {
             for (const update of result.result) {
                 lastUpdateId = update.update_id;
@@ -1216,12 +1294,25 @@ const poll = async () => {
             }
         }
     } catch (error) {
-        consecutiveErrors++;
-        console.error(`Poll error (${consecutiveErrors}):`, error.message);
+        if (isGetUpdatesConflictError(error?.message)) {
+            consecutiveConflicts++;
+            const delay = Math.min(
+                TELEGRAM_CONFLICT_BACKOFF_MS * Math.max(1, consecutiveConflicts),
+                TELEGRAM_MAX_CONFLICT_BACKOFF_MS
+            );
+            console.error(`Poll conflict (${consecutiveConflicts}): ${error.message}`);
+            if (consecutiveConflicts === 1 || consecutiveConflicts % 5 === 0) {
+                console.error('⚠️ Another bot instance is polling with the same token. Keep only one active instance.');
+            }
+            await sleep(delay);
+        } else {
+            consecutiveErrors++;
+            console.error(`Poll error (${consecutiveErrors}):`, error.message);
 
-        // Exponential backoff
-        const delay = Math.min(5000 * Math.pow(2, consecutiveErrors - 1), 60000);
-        await sleep(delay);
+            // Exponential backoff
+            const delay = Math.min(5000 * Math.pow(2, consecutiveErrors - 1), 60000);
+            await sleep(delay);
+        }
     }
 
     setImmediate(poll);
@@ -1241,11 +1332,21 @@ const main = async () => {
         process.exit(1);
     }
 
+    acquireBotLock();
+    console.log(`🔒 Instance lock: ${BOT_LOCK_FILE}`);
+
     // Verify bot
     const me = await apiCall('getMe');
     if (!me.ok) {
         console.error(`❌ Invalid bot token (${me.description || 'unknown error'})`);
+        releaseBotLock();
         process.exit(1);
+    }
+
+    const webhookInfo = await apiCall('getWebhookInfo', {}, 1).catch(() => ({ ok: false }));
+    if (webhookInfo?.ok && webhookInfo?.result?.url) {
+        console.log(`ℹ️ Webhook detected (${webhookInfo.result.url}). Clearing webhook for polling mode...`);
+        await apiCall('deleteWebhook', { drop_pending_updates: false }, 2);
     }
 
     // Status checks
@@ -1293,6 +1394,7 @@ const shutdown = (signal) => {
     } catch (e) {
         // Ignore shutdown cleanup errors
     }
+    releaseBotLock();
     process.exit(0);
 };
 
@@ -1302,5 +1404,6 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 // Start Main
 main().catch(err => {
     console.error('❌ Fatal Startup Error:', err);
+    releaseBotLock();
     process.exit(1);
 });

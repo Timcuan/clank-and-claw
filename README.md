@@ -80,6 +80,20 @@ Telegram bot:
 npm run start
 ```
 
+Recommended on VPS (PM2, single instance):
+```bash
+~/bot-start.sh
+~/bot-status.sh
+pm2 logs clanker-bot
+```
+
+All-in-one VPS wizard/manager:
+```bash
+npm run vps:wizard
+# or on VPS:
+~/clawctl wizard
+```
+
 CLI (from `token.json`):
 ```bash
 npm run deploy
@@ -123,10 +137,31 @@ DEFAULT_CONTEXT_ID=<valid_post_or_cast_id>
 DEFAULT_IMAGE_URL=
 ```
 
+## VPS Lifecycle Wizard
+
+`vps-manager.sh` is a unified operational wizard/CLI with robust fallbacks:
+
+- `install` bootstrap/reinstall VPS setup
+- `update` git pull + npm install + hardening tests + auto restart bot
+- `heal` clean stale lock/process conflict + webhook cleanup + restart
+- `backup` / `restore` operational backup workflow
+- `uninstall` clean removal of PM2 app, helper scripts, lock files, and project directory
+
+Common commands:
+
+```bash
+~/clawctl status
+~/clawctl update
+~/clawctl heal
+~/clawctl backup
+~/clawctl uninstall
+```
+
 ## Project Map
 
 ```text
 clank-and-claw/
+├── vps-manager.sh
 ├── telegram-bot.js
 ├── deploy.js
 ├── openclaw-handler.js
@@ -150,6 +185,7 @@ clank-and-claw/
 - If deployment tx is sent but primary RPC times out, receipt recovery automatically checks fallback RPCs.
 - `DRY_RUN=true` validates and simulates deployment without spending gas.
 - For maximum Clankerworld consistency, set `DEFAULT_CONTEXT_ID` to a valid tweet/cast ID.
+- Run only one bot instance per token to avoid Telegram `getUpdates` conflict. The bot now uses a local lock file to block duplicate local runs.
 
 ## Release Notes
 

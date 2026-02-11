@@ -138,6 +138,7 @@ Direct manager commands:
 ~/clawctl heal
 ~/clawctl backup
 ~/clawctl uninstall
+~/clawctl shortcuts
 ```
 
 Kubo lifecycle quick helpers:

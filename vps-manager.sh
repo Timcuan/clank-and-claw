@@ -45,6 +45,7 @@ Usage:
   bash vps-manager.sh heal
   bash vps-manager.sh backup
   bash vps-manager.sh restore <backup.tar.gz>
+  bash vps-manager.sh shortcuts
   bash vps-manager.sh uninstall [--yes] [--force]
 EOF
 }
@@ -71,7 +72,21 @@ target_user() {
 }
 
 target_home() {
-    getent passwd "$(target_user)" | cut -d: -f6
+    local user
+    user="$(target_user)"
+    if have_cmd getent; then
+        getent passwd "$user" | cut -d: -f6
+        return 0
+    fi
+    if [ "$user" = "${USER:-}" ] && [ -n "${HOME:-}" ]; then
+        echo "$HOME"
+        return 0
+    fi
+    if [ "$user" = "root" ]; then
+        echo "/root"
+        return 0
+    fi
+    echo "/home/$user"
 }
 
 run_as_target_user_shell() {
@@ -150,6 +165,103 @@ env_truthy() {
     local normalized
     normalized="$(echo "${1:-}" | tr '[:upper:]' '[:lower:]' | tr -d '"' | xargs)"
     [[ "$normalized" == "1" || "$normalized" == "true" || "$normalized" == "yes" || "$normalized" == "on" ]]
+}
+
+is_placeholder_value() {
+    local value="$1"
+    local normalized
+    normalized="$(echo "$value" | tr '[:lower:]' '[:upper:]')"
+    [[ "$normalized" == *"REPLACE_ME"* || "$normalized" == *"YOUR_"* || "$normalized" == *"<"*">"* ]]
+}
+
+wait_for_kubo_api() {
+    local base="$1"
+    local retries="${2:-15}"
+    local sleep_s="${3:-1}"
+    local i
+    for i in $(seq 1 "$retries"); do
+        if check_kubo_api "$base"; then
+            return 0
+        fi
+        sleep "$sleep_s"
+    done
+    return 1
+}
+
+build_gateway_probe_url() {
+    local raw="$1"
+    local sample_cid="bafybeigdyrzt5sfp7udm7hu76m4i7c3n5iktx4n63n3z7qk6n5f3f6f7ha"
+    local probe="${raw//\{cid\}/$sample_cid}"
+    probe="${probe%/}"
+
+    if [[ "$probe" == *"/ipfs/$sample_cid" ]]; then
+        echo "$probe"
+        return 0
+    fi
+    if [[ "$probe" == */ipfs ]]; then
+        echo "$probe/$sample_cid"
+        return 0
+    fi
+    if [[ "$probe" == */ipfs/ ]]; then
+        echo "${probe}${sample_cid}"
+        return 0
+    fi
+    if [[ "$probe" == *"/ipfs/"* ]]; then
+        echo "$probe"
+        return 0
+    fi
+    echo "$probe/ipfs/$sample_cid"
+}
+
+check_gateway_endpoint() {
+    local input="$1"
+    local probe code
+    probe="$(build_gateway_probe_url "$input")"
+    code="$(curl -sS -L --max-time 12 -o /dev/null -w '%{http_code}' "$probe" 2>/dev/null || true)"
+    [[ "$code" =~ ^[1-4][0-9][0-9]$ ]]
+}
+
+write_shortcut_script() {
+    local path="$1"
+    local command_line="$2"
+    local tmp
+    tmp="$(mktemp)"
+    cat > "$tmp" <<EOF
+#!/bin/bash
+set -euo pipefail
+$command_line "\$@"
+EOF
+    install -m 0755 "$tmp" "$path"
+    rm -f "$tmp"
+}
+
+ensure_home_shortcuts() {
+    if [ ! -f "$PROJECT_DIR/vps-manager.sh" ]; then
+        return 0
+    fi
+
+    local home manager direct_script
+    home="$(target_home)"
+    [ -n "$home" ] || home="$HOME"
+    manager="$PROJECT_DIR/vps-manager.sh"
+    direct_script="bash \"$manager\""
+
+    write_shortcut_script "$home/clawctl" "$direct_script"
+    write_shortcut_script "$home/claw-wizard.sh" "\"$home/clawctl\" wizard"
+    write_shortcut_script "$home/claw-update.sh" "\"$home/clawctl\" update"
+    write_shortcut_script "$home/claw-doctor.sh" "\"$home/clawctl\" doctor"
+    write_shortcut_script "$home/claw-uninstall.sh" "\"$home/clawctl\" uninstall"
+    write_shortcut_script "$home/claw-kubo.sh" "\"$home/clawctl\" kubo-install --yes"
+    write_shortcut_script "$home/kubo-setup.sh" "\"$home/clawctl\" kubo-install --yes"
+    write_shortcut_script "$home/kubo-status.sh" "\"$home/clawctl\" kubo-status"
+    write_shortcut_script "$home/kubo-start.sh" "\"$home/clawctl\" kubo-start"
+    write_shortcut_script "$home/kubo-stop.sh" "\"$home/clawctl\" kubo-stop"
+    write_shortcut_script "$home/kubo-restart.sh" "\"$home/clawctl\" kubo-restart"
+    write_shortcut_script "$home/bot-setup.sh" "\"$home/clawctl\" telegram-setup"
+    write_shortcut_script "$home/ipfs-setup.sh" "\"$home/clawctl\" ipfs-setup"
+    write_shortcut_script "$home/bot-start.sh" "\"$home/clawctl\" start"
+    write_shortcut_script "$home/bot-stop.sh" "\"$home/clawctl\" stop"
+    write_shortcut_script "$home/bot-status.sh" "\"$home/clawctl\" status"
 }
 
 check_kubo_api() {
@@ -282,10 +394,9 @@ do_kubo_install() {
     ensure_kubo_repo
     ensure_kubo_service_template
     run_as_root systemctl enable --now "$svc"
-    sleep 2
     set_local_kubo_env_defaults
 
-    if check_kubo_api "http://127.0.0.1:5001"; then
+    if wait_for_kubo_api "http://127.0.0.1:5001" 25 1; then
         ok "Kubo aktif dan API reachable di http://127.0.0.1:5001"
     else
         warn "Kubo service aktif tapi API belum reachable. Cek: bash vps-manager.sh kubo-status"
@@ -297,8 +408,7 @@ do_kubo_start() {
     svc="$(kubo_service_name)"
     ensure_kubo_service_template
     run_as_root systemctl enable --now "$svc"
-    sleep 1
-    if check_kubo_api "http://127.0.0.1:5001"; then
+    if wait_for_kubo_api "http://127.0.0.1:5001" 15 1; then
         ok "Kubo started dan API reachable."
     else
         warn "Kubo started tapi API belum reachable."
@@ -317,8 +427,7 @@ do_kubo_restart() {
     svc="$(kubo_service_name)"
     ensure_kubo_service_template
     run_as_root systemctl restart "$svc"
-    sleep 1
-    if check_kubo_api "http://127.0.0.1:5001"; then
+    if wait_for_kubo_api "http://127.0.0.1:5001" 15 1; then
         ok "Kubo restarted dan API reachable."
     else
         warn "Kubo restarted tapi API belum reachable."
@@ -370,8 +479,7 @@ ensure_kubo_runtime_if_configured() {
     if run_as_root systemctl list-unit-files "$svc" >/dev/null 2>&1; then
         warn "Mencoba start service $svc..."
         run_as_root systemctl start "$svc" || true
-        sleep 2
-        if check_kubo_api "$api"; then
+        if wait_for_kubo_api "$api" 12 1; then
             ok "Kubo recovered: $api"
             return 0
         fi
@@ -445,9 +553,7 @@ END {
 
 is_placeholder_token() {
     local token="$1"
-    local normalized
-    normalized="$(echo "$token" | tr '[:lower:]' '[:upper:]')"
-    [[ "$normalized" == *"REPLACE_ME"* || "$normalized" == *"YOUR_BOT_TOKEN"* || "$normalized" == *"<TOKEN"* ]]
+    is_placeholder_value "$token"
 }
 
 TELEGRAM_CHECK_USERNAME=""
@@ -604,7 +710,7 @@ setup_ipfs_env() {
             upsert_env_value ENABLE_INFURA_IPFS_LEGACY "false"
             upsert_env_value ENABLE_NFT_STORAGE_CLASSIC "false"
 
-            if check_kubo_api "$kubo_api"; then
+            if wait_for_kubo_api "$kubo_api" 5 1; then
                 ok "Kubo API reachable: $kubo_api"
             else
                 warn "Kubo API not reachable yet: $kubo_api"
@@ -907,7 +1013,7 @@ run_netcheck() {
     if curl -fsS --max-time 10 -H 'content-type: application/json' \
         -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
         https://mainnet.base.org >/dev/null 2>&1; then ok "Base RPC"; else err "Base RPC"; fi
-    if curl -fsS --max-time 10 https://gateway.pinata.cloud/ipfs >/dev/null 2>&1; then ok "IPFS gateway"; else warn "IPFS gateway"; fi
+    if check_gateway_endpoint "https://gateway.pinata.cloud/ipfs/{cid}"; then ok "IPFS gateway"; else warn "IPFS gateway"; fi
 }
 
 do_doctor() {
@@ -971,6 +1077,10 @@ do_doctor() {
     for rpc in "$rpc_primary" $(echo "$rpc_fallback_raw" | tr ',' ' '); do
         rpc="$(echo "$rpc" | xargs)"
         [ -n "$rpc" ] || continue
+        if is_placeholder_value "$rpc"; then
+            info "RPC placeholder skipped: $rpc"
+            continue
+        fi
         if echo "$seen_rpc" | grep -Fqx "$rpc"; then
             continue
         fi
@@ -997,7 +1107,7 @@ do_doctor() {
     local ipfs_first
     ipfs_first="$(echo "$ipfs_gateways" | tr ',' '\n' | head -n1 | xargs)"
     if [ -n "$ipfs_first" ]; then
-        if curl -fsS --max-time 10 "$ipfs_first" >/dev/null 2>&1; then
+        if check_gateway_endpoint "$ipfs_first"; then
             ok "IPFS gateway reachable: $ipfs_first"
         else
             warn "IPFS gateway unreachable: $ipfs_first"
@@ -1180,6 +1290,7 @@ do_update() {
     npm run test:hardening
     npm test
 
+    ensure_home_shortcuts || true
     cleanup_stale_locks
     restart_bot
     ok "Update + restart selesai."
@@ -1371,6 +1482,10 @@ main() {
         shift || true
     done
 
+    if [ "$command" != "install" ] && [ "$command" != "help" ] && [ "$command" != "-h" ] && [ "$command" != "--help" ]; then
+        ensure_home_shortcuts || true
+    fi
+
     case "$command" in
         wizard) wizard ;;
         install) do_install ;;
@@ -1392,6 +1507,7 @@ main() {
         heal) do_heal ;;
         backup) do_backup ;;
         restore) do_restore "${args[0]:-}" ;;
+        shortcuts) ensure_home_shortcuts; ok "Home shortcuts repaired." ;;
         uninstall) do_uninstall ;;
         help|-h|--help) usage ;;
         *)

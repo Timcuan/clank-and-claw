@@ -109,6 +109,7 @@ npm run test:hardening
 Recommended on VPS (PM2 + single instance):
 
 ```bash
+~/clawctl kubo-install
 ~/bot-setup.sh
 ~/clawctl doctor
 ~/bot-start.sh
@@ -126,6 +127,9 @@ Direct manager commands:
 
 ```bash
 ~/clawctl doctor
+~/clawctl kubo-install
+~/clawctl kubo-status
+~/clawctl kubo-restart
 ~/clawctl telegram-setup
 ~/clawctl ipfs-setup
 ~/clawctl start
@@ -134,6 +138,16 @@ Direct manager commands:
 ~/clawctl heal
 ~/clawctl backup
 ~/clawctl uninstall
+```
+
+Kubo lifecycle quick helpers:
+
+```bash
+~/kubo-setup.sh
+~/kubo-status.sh
+~/kubo-start.sh
+~/kubo-stop.sh
+~/kubo-restart.sh
 ```
 
 ## Telegram Command Surface
@@ -169,7 +183,8 @@ flowchart TD
     C --> C4[Set Context]
     C --> C5[Set Image]
     C --> C6[Set Spoof]
-    C --> C7[Fallback Tools]
+    C --> C7[Profiles]
+    C --> C8[Fallback Tools]
 
     D --> D1[Name]
     D1 --> D2[Symbol]
@@ -201,6 +216,12 @@ DEFAULT_IMAGE_URL=
 
 Configure at least one upload backend:
 Runtime priority is fixed: **Local Kubo -> Pinata -> legacy providers**.
+
+Install/repair local Kubo daemon:
+```bash
+~/clawctl kubo-install
+~/clawctl kubo-status
+```
 
 1. Local Kubo node (no API key, recommended self-hosted):
 ```env

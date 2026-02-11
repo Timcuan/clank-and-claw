@@ -28,6 +28,11 @@ Usage:
   bash vps-manager.sh wizard
   bash vps-manager.sh install
   bash vps-manager.sh update [--force]
+  bash vps-manager.sh kubo-install [--force]
+  bash vps-manager.sh kubo-start
+  bash vps-manager.sh kubo-stop
+  bash vps-manager.sh kubo-restart
+  bash vps-manager.sh kubo-status
   bash vps-manager.sh doctor
   bash vps-manager.sh start
   bash vps-manager.sh telegram-setup
@@ -46,6 +51,51 @@ EOF
 
 have_cmd() {
     command -v "$1" >/dev/null 2>&1
+}
+
+run_as_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@"
+        return $?
+    fi
+    if have_cmd sudo; then
+        sudo "$@"
+        return $?
+    fi
+    err "Butuh akses root untuk operasi ini, tapi sudo tidak tersedia."
+    return 1
+}
+
+target_user() {
+    echo "${SUDO_USER:-$USER}"
+}
+
+target_home() {
+    getent passwd "$(target_user)" | cut -d: -f6
+}
+
+run_as_target_user_shell() {
+    local cmd="$1"
+    local tuser
+    tuser="$(target_user)"
+
+    if [ "$(id -un)" = "$tuser" ]; then
+        bash -lc "$cmd"
+        return $?
+    fi
+
+    if [ "$(id -u)" -eq 0 ]; then
+        su - "$tuser" -s /bin/bash -c "$cmd"
+        return $?
+    fi
+
+    if have_cmd sudo; then
+        sudo -u "$tuser" -H bash -lc "$cmd"
+        return $?
+    fi
+
+    err "Tidak bisa menjalankan command sebagai user $tuser (sudo tidak tersedia)."
+    return 1
 }
 
 resolve_project_dir() {
@@ -107,6 +157,228 @@ check_kubo_api() {
     base="${base%/}"
     [ -n "$base" ] || return 1
     curl -fsS --max-time 8 "$base/api/v0/version" >/dev/null 2>&1
+}
+
+kubo_service_name() {
+    echo "kubo@$(target_user).service"
+}
+
+kubo_is_active() {
+    local svc
+    svc="$(kubo_service_name)"
+    run_as_root systemctl is-active --quiet "$svc" >/dev/null 2>&1
+}
+
+ensure_kubo_service_template() {
+    local tmp
+    tmp="$(mktemp)"
+    cat > "$tmp" <<'EOF'
+[Unit]
+Description=IPFS Kubo Daemon (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+Environment=IPFS_PATH=%h/.ipfs
+ExecStart=/usr/local/bin/ipfs daemon --migrate=true --enable-gc
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    run_as_root install -m 0644 "$tmp" /etc/systemd/system/kubo@.service
+    rm -f "$tmp"
+    run_as_root systemctl daemon-reload
+}
+
+detect_kubo_arch() {
+    local machine
+    machine="$(uname -m)"
+    case "$machine" in
+        x86_64|amd64) echo "amd64" ;;
+        aarch64|arm64) echo "arm64" ;;
+        *)
+            err "Arsitektur tidak didukung untuk auto-install Kubo: $machine"
+            return 1
+            ;;
+    esac
+}
+
+install_kubo_binary() {
+    local arch version tmpdir tarball url
+    arch="$(detect_kubo_arch)"
+    version="$(curl -fsSL https://dist.ipfs.tech/kubo/versions | tail -n1 | tr -d '\r')"
+    if [ -z "$version" ]; then
+        err "Gagal mengambil versi Kubo terbaru."
+        return 1
+    fi
+
+    tmpdir="$(mktemp -d)"
+    tarball="$tmpdir/kubo_${version}_linux-${arch}.tar.gz"
+    url="https://dist.ipfs.tech/kubo/${version}/kubo_${version}_linux-${arch}.tar.gz"
+
+    info "Download Kubo ${version} (${arch})..."
+    curl -fsSL "$url" -o "$tarball"
+    tar -xzf "$tarball" -C "$tmpdir"
+
+    if [ ! -x "$tmpdir/kubo/install.sh" ]; then
+        err "Installer Kubo tidak ditemukan setelah ekstraksi."
+        rm -rf "$tmpdir"
+        return 1
+    fi
+
+    info "Install binary Kubo ke /usr/local/bin..."
+    (cd "$tmpdir/kubo" && run_as_root bash ./install.sh)
+    rm -rf "$tmpdir"
+}
+
+ensure_kubo_repo() {
+    local home
+    home="$(target_home)"
+    if [ -z "$home" ]; then
+        err "Tidak bisa menentukan home directory target user."
+        return 1
+    fi
+
+    run_as_target_user_shell '
+set -euo pipefail
+if [ ! -f "$HOME/.ipfs/config" ]; then
+  ipfs init --profile=server
+fi
+ipfs config Addresses.API /ip4/127.0.0.1/tcp/5001 >/dev/null
+ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/8080 >/dev/null
+'
+}
+
+set_local_kubo_env_defaults() {
+    require_project
+    cd "$PROJECT_DIR"
+    ensure_env_file
+    upsert_env_value IPFS_KUBO_API "http://127.0.0.1:5001"
+    upsert_env_value ENABLE_INFURA_IPFS_LEGACY "false"
+    upsert_env_value ENABLE_NFT_STORAGE_CLASSIC "false"
+}
+
+do_kubo_install() {
+    local force="${1:-0}"
+    local svc
+    svc="$(kubo_service_name)"
+
+    if have_cmd ipfs; then
+        if [ "$force" -eq 1 ]; then
+            warn "Kubo binary sudah ada, reinstall karena --force"
+            install_kubo_binary
+        else
+            ok "Kubo binary sudah terpasang: $(ipfs version | head -n1)"
+        fi
+    else
+        install_kubo_binary
+    fi
+
+    ensure_kubo_repo
+    ensure_kubo_service_template
+    run_as_root systemctl enable --now "$svc"
+    sleep 2
+    set_local_kubo_env_defaults
+
+    if check_kubo_api "http://127.0.0.1:5001"; then
+        ok "Kubo aktif dan API reachable di http://127.0.0.1:5001"
+    else
+        warn "Kubo service aktif tapi API belum reachable. Cek: bash vps-manager.sh kubo-status"
+    fi
+}
+
+do_kubo_start() {
+    local svc
+    svc="$(kubo_service_name)"
+    ensure_kubo_service_template
+    run_as_root systemctl enable --now "$svc"
+    sleep 1
+    if check_kubo_api "http://127.0.0.1:5001"; then
+        ok "Kubo started dan API reachable."
+    else
+        warn "Kubo started tapi API belum reachable."
+    fi
+}
+
+do_kubo_stop() {
+    local svc
+    svc="$(kubo_service_name)"
+    run_as_root systemctl stop "$svc" >/dev/null 2>&1 || true
+    ok "Kubo stopped ($svc)"
+}
+
+do_kubo_restart() {
+    local svc
+    svc="$(kubo_service_name)"
+    ensure_kubo_service_template
+    run_as_root systemctl restart "$svc"
+    sleep 1
+    if check_kubo_api "http://127.0.0.1:5001"; then
+        ok "Kubo restarted dan API reachable."
+    else
+        warn "Kubo restarted tapi API belum reachable."
+    fi
+}
+
+show_kubo_status() {
+    local svc
+    svc="$(kubo_service_name)"
+    echo ""
+    echo "===== KUBO STATUS ====="
+    echo "Service: $svc"
+    if have_cmd ipfs; then
+        echo "Binary: $(ipfs version | head -n1)"
+    else
+        echo "Binary: not installed"
+    fi
+
+    if kubo_is_active; then
+        ok "Systemd: active"
+    else
+        warn "Systemd: inactive"
+    fi
+
+    local api
+    api="http://127.0.0.1:5001"
+    if check_kubo_api "$api"; then
+        ok "API reachable: $api"
+    else
+        warn "API unreachable: $api"
+    fi
+
+    run_as_root systemctl status "$svc" --no-pager -n 20 || true
+}
+
+ensure_kubo_runtime_if_configured() {
+    local api
+    api="$(read_env_value IPFS_KUBO_API)"
+    [ -n "$api" ] || return 0
+
+    if check_kubo_api "$api"; then
+        ok "Kubo ready: $api"
+        return 0
+    fi
+
+    warn "IPFS_KUBO_API configured but not reachable: $api"
+    local svc
+    svc="$(kubo_service_name)"
+    if run_as_root systemctl list-unit-files "$svc" >/dev/null 2>&1; then
+        warn "Mencoba start service $svc..."
+        run_as_root systemctl start "$svc" || true
+        sleep 2
+        if check_kubo_api "$api"; then
+            ok "Kubo recovered: $api"
+            return 0
+        fi
+    fi
+
+    warn "Kubo belum aktif. Jalankan: bash vps-manager.sh kubo-install"
+    return 0
 }
 
 mask_presence() {
@@ -336,7 +608,15 @@ setup_ipfs_env() {
                 ok "Kubo API reachable: $kubo_api"
             else
                 warn "Kubo API not reachable yet: $kubo_api"
-                warn "Pastikan daemon IPFS aktif (contoh: ipfs daemon)"
+                warn "Jalankan installer otomatis: bash vps-manager.sh kubo-install"
+                if [ "$YES_MODE" -eq 1 ]; then
+                    do_kubo_install "$FORCE_MODE" || true
+                else
+                    read -r -p "Install/repair Kubo sekarang? (Y/n): " install_now
+                    if [ -z "$install_now" ] || [[ "$install_now" =~ ^[Yy]$ ]]; then
+                        do_kubo_install "$FORCE_MODE" || true
+                    fi
+                fi
             fi
             ;;
         2)
@@ -490,6 +770,7 @@ start_bot() {
     require_project
     cd "$PROJECT_DIR"
     ensure_env_file
+    ensure_kubo_runtime_if_configured || true
 
     local token
     token="$(telegram_token || true)"
@@ -970,9 +1251,15 @@ do_uninstall() {
         "$HOME/claw-update.sh" \
         "$HOME/claw-uninstall.sh" \
         "$HOME/claw-netcheck.sh" \
+        "$HOME/claw-kubo.sh" \
         "$HOME/run-bot.sh" \
         "$HOME/bot-setup.sh" \
         "$HOME/ipfs-setup.sh" \
+        "$HOME/kubo-setup.sh" \
+        "$HOME/kubo-status.sh" \
+        "$HOME/kubo-start.sh" \
+        "$HOME/kubo-stop.sh" \
+        "$HOME/kubo-restart.sh" \
         "$HOME/bot-start.sh" \
         "$HOME/bot-stop.sh" \
         "$HOME/bot-status.sh" \
@@ -1028,18 +1315,20 @@ wizard() {
         echo "===== CLANK & CLAW WIZARD ====="
         echo "1) Install / Reinstall"
         echo "2) Update (git + npm + test + restart)"
-        echo "3) Doctor (preflight full check)"
-        echo "4) Telegram bot setup (.env + token validation)"
-        echo "5) IPFS setup (.env upload backend)"
-        echo "6) Start bot"
-        echo "7) Stop bot"
-        echo "8) Restart bot"
-        echo "9) Status"
-        echo "10) Logs"
-        echo "11) Network check"
-        echo "12) Self-heal"
-        echo "13) Backup"
-        echo "14) Uninstall clean"
+        echo "3) Kubo Install / Repair (recommended)"
+        echo "4) Kubo Status"
+        echo "5) Doctor (preflight full check)"
+        echo "6) Telegram bot setup (.env + token validation)"
+        echo "7) IPFS setup (.env upload backend)"
+        echo "8) Start bot"
+        echo "9) Stop bot"
+        echo "10) Restart bot"
+        echo "11) Status"
+        echo "12) Logs"
+        echo "13) Network check"
+        echo "14) Self-heal"
+        echo "15) Backup"
+        echo "16) Uninstall clean"
         echo "0) Exit"
         echo -n "Pilih menu: "
         read -r menu
@@ -1047,18 +1336,20 @@ wizard() {
         case "$menu" in
             1) do_install ;;
             2) do_update ;;
-            3) do_doctor ;;
-            4) setup_telegram_env ;;
-            5) setup_ipfs_env ;;
-            6) start_bot ;;
-            7) stop_bot ;;
-            8) restart_bot ;;
-            9) show_status ;;
-            10) show_logs 120 ;;
-            11) run_netcheck ;;
-            12) do_heal ;;
-            13) do_backup ;;
-            14) do_uninstall ;;
+            3) do_kubo_install "$FORCE_MODE" ;;
+            4) show_kubo_status ;;
+            5) do_doctor ;;
+            6) setup_telegram_env ;;
+            7) setup_ipfs_env ;;
+            8) start_bot ;;
+            9) stop_bot ;;
+            10) restart_bot ;;
+            11) show_status ;;
+            12) show_logs 120 ;;
+            13) run_netcheck ;;
+            14) do_heal ;;
+            15) do_backup ;;
+            16) do_uninstall ;;
             0) break ;;
             *) warn "Pilihan tidak valid" ;;
         esac
@@ -1084,6 +1375,11 @@ main() {
         wizard) wizard ;;
         install) do_install ;;
         update) do_update ;;
+        kubo-install) do_kubo_install "$FORCE_MODE" ;;
+        kubo-start) do_kubo_start ;;
+        kubo-stop) do_kubo_stop ;;
+        kubo-restart) do_kubo_restart ;;
+        kubo-status) show_kubo_status ;;
         doctor) do_doctor ;;
         telegram-setup) setup_telegram_env ;;
         ipfs-setup) setup_ipfs_env ;;

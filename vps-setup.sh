@@ -193,6 +193,13 @@ set -euo pipefail
 EOF
 chmod +x ~/claw-uninstall.sh
 
+cat > ~/claw-kubo.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+~/clawctl kubo-install --yes "$@"
+EOF
+chmod +x ~/claw-kubo.sh
+
 # Network diagnostics helper
 cat > ~/claw-netcheck.sh << 'EOF'
 #!/bin/bash
@@ -280,6 +287,41 @@ set -euo pipefail
 EOF
 chmod +x ~/ipfs-setup.sh
 
+cat > ~/kubo-setup.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+~/clawctl kubo-install --yes "$@"
+EOF
+chmod +x ~/kubo-setup.sh
+
+cat > ~/kubo-status.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+~/clawctl kubo-status "$@"
+EOF
+chmod +x ~/kubo-status.sh
+
+cat > ~/kubo-start.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+~/clawctl kubo-start "$@"
+EOF
+chmod +x ~/kubo-start.sh
+
+cat > ~/kubo-stop.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+~/clawctl kubo-stop "$@"
+EOF
+chmod +x ~/kubo-stop.sh
+
+cat > ~/kubo-restart.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+~/clawctl kubo-restart "$@"
+EOF
+chmod +x ~/kubo-restart.sh
+
 cat > ~/bot-stop.sh << 'EOF'
 #!/bin/bash
 set -euo pipefail
@@ -315,6 +357,12 @@ chmod +x ~/bot-enable-autostart.sh
 # Ensure log directory exists for PM2 ecosystem
 mkdir -p ~/clank-and-claw/logs
 
+# Install/repair Kubo local IPFS (best effort)
+echo "🧩 Ensuring local Kubo IPFS is installed..."
+if [ -x ~/clawctl ]; then
+    ~/clawctl kubo-install --yes || echo "⚠️  Kubo auto-install failed (run ~/claw-kubo.sh manually)"
+fi
+
 # Quick network preflight summary
 echo "🌐 Running quick network preflight..."
 check_endpoint "https://api.telegram.org" "Telegram API"
@@ -335,15 +383,23 @@ echo ""
 echo "🚀 Quick Commands:"
 echo "   ~/clawctl wizard               # All-in-one install/update/uninstall wizard"
 echo "   ~/clawctl doctor               # Preflight check (token/key/rpc/ipfs/pm2)"
+echo "   ~/clawctl kubo-install         # Install/repair local Kubo + service"
+echo "   ~/clawctl kubo-status          # Check Kubo service/API status"
 echo "   ~/clawctl telegram-setup       # Setup + validate Telegram token"
 echo "   ~/clawctl ipfs-setup           # Setup IPFS upload backend (Kubo/Pinata/legacy)"
 echo "   ~/claw-update.sh               # Safe update: git + npm + tests + restart"
 echo "   ~/claw-doctor.sh               # Shortcut doctor check"
+echo "   ~/claw-kubo.sh                 # Shortcut Kubo install/repair"
 echo "   ~/claw-uninstall.sh            # Clean uninstall (with backup)"
 echo "   ~/deploy-token.sh              # Deploy from .env"
 echo "   ~/openclaw.sh --file input.json # Deploy from JSON"
 echo "   ~/bot-setup.sh                 # Setup + validate Telegram bot token"
 echo "   ~/ipfs-setup.sh                # Setup IPFS upload backend"
+echo "   ~/kubo-setup.sh                # Install/repair local Kubo"
+echo "   ~/kubo-status.sh               # Check Kubo status"
+echo "   ~/kubo-start.sh                # Start Kubo service"
+echo "   ~/kubo-stop.sh                 # Stop Kubo service"
+echo "   ~/kubo-restart.sh              # Restart Kubo service"
 echo "   ~/bot-start.sh                 # Start bot with PM2 (recommended)"
 echo "   ~/bot-stop.sh                  # Stop PM2 bot"
 echo "   ~/bot-status.sh                # Check bot status"
@@ -352,9 +408,10 @@ echo "   ~/run-bot.sh                   # Start direct (manual, no PM2)"
 echo "   ~/claw-netcheck.sh             # Diagnose VPS network/DNS/gateway"
 echo ""
 echo "🤖 Telegram Bot Setup:"
-echo "   1. ~/bot-setup.sh              # Input token/admin + validate to Telegram API"
-echo "   2. ~/bot-start.sh"
-echo "   3. pm2 logs clanker-bot"
+echo "   1. ~/kubo-status.sh            # Pastikan local Kubo API active"
+echo "   2. ~/bot-setup.sh              # Input token/admin + validate to Telegram API"
+echo "   3. ~/bot-start.sh"
+echo "   4. pm2 logs clanker-bot"
 echo ""
 echo "💡 Use tmux for persistent sessions:"
 echo "   tmux new -s claw"

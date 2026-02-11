@@ -52,6 +52,9 @@ sequenceDiagram
     Admin->>Mgr: clawctl ipfs-setup
     Mgr->>Mgr: Configure IPFS upload backend (Kubo/Pinata/legacy)
 
+    Admin->>Mgr: clawctl kubo-install
+    Mgr->>Mgr: Install/repair Kubo daemon + systemd service
+
     Admin->>Mgr: clawctl doctor
     Mgr->>Mgr: Check token, key, RPC, IPFS, PM2
 
@@ -220,6 +223,9 @@ sequenceDiagram
 |---|---|
 | Interactive all-in-one menu | `~/clawctl wizard` |
 | Full preflight diagnostic | `~/clawctl doctor` |
+| Install/repair local Kubo | `~/clawctl kubo-install` |
+| Kubo service/API status | `~/clawctl kubo-status` |
+| Restart Kubo service | `~/clawctl kubo-restart` |
 | Setup Telegram token/admin | `~/clawctl telegram-setup` |
 | Setup IPFS upload backend | `~/clawctl ipfs-setup` |
 | Start bot | `~/clawctl start` |

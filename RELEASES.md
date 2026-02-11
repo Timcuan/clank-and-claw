@@ -10,6 +10,8 @@
 - **`ipfs-setup` Wizard**: Added guided `vps-manager.sh ipfs-setup` flow (Kubo/Pinata/legacy/CID-only modes).
 - **Doctor Upgrade**: `clawctl doctor` now verifies upload backend readiness, not just IPFS gateway reachability.
 - **Setup Helpers Updated**: VPS setup now ships `~/ipfs-setup.sh` and includes Kubo optional connectivity checks.
+- **Kubo Lifecycle Module**: Added `kubo-install`, `kubo-start`, `kubo-stop`, `kubo-restart`, and `kubo-status` commands in `vps-manager.sh`.
+- **Auto Kubo Bootstrap**: `vps-setup.sh` now attempts best-effort Kubo install/repair so local IPFS path is ready by default.
 
 ### 💾 Config Persistence
 - **Built-in Local Config DB**: Added `lib/config-store.js` with atomic file writes for per-chat draft + preset storage.

@@ -149,6 +149,7 @@ flowchart TD
 `vps-manager.sh` provides operational lifecycle commands:
 - `doctor`: preflight health gate
 - `telegram-setup` / `ipfs-setup`: guided credential/backend setup
+- `kubo-install` / `kubo-status`: local IPFS daemon lifecycle for local-first upload path
 - `start/stop/restart/status/logs`
 - `update`: git pull + deps + tests + restart
 - `heal`: recover from lock/process/webhook conflicts

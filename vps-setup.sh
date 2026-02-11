@@ -8,13 +8,33 @@ set -euo pipefail
 
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+        echo "❌ sudo not found. Jalankan script ini sebagai root, atau install sudo terlebih dulu."
+        exit 1
+    fi
     SUDO="sudo"
 fi
 
 PROJECT_DIR="clank-and-claw"
 REPO_URL="https://github.com/Timcuan/clank-and-claw.git"
+TARGET_USER="${SUDO_USER:-$USER}"
+TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6 2>/dev/null || true)"
+if [ -z "${TARGET_HOME:-}" ]; then
+    TARGET_HOME="$HOME"
+fi
+PROJECT_PATH="${TARGET_HOME}/${PROJECT_DIR}"
+
+if ! command -v apt >/dev/null 2>&1; then
+    echo "❌ Script ini khusus Debian/Ubuntu (apt tidak ditemukan)."
+    exit 1
+fi
+
+export DEBIAN_FRONTEND=noninteractive
 
 echo "🚀 Starting Clank & Claw VPS Setup..."
+echo "👤 Target user: ${TARGET_USER}"
+echo "🏠 Target home: ${TARGET_HOME}"
+echo "📁 Project path: ${PROJECT_PATH}"
 
 check_endpoint() {
     local url="$1"
@@ -64,21 +84,25 @@ fi
 # ─────────────────────────────────────────
 # 4. Clone / Update Repository
 # ─────────────────────────────────────────
-cd ~
-if [ ! -d "${PROJECT_DIR}/.git" ]; then
+cd "${TARGET_HOME}"
+if [ ! -d "${PROJECT_PATH}/.git" ]; then
     echo "📂 Cloning repository..."
-    git clone "${REPO_URL}" "${PROJECT_DIR}"
+    git clone "${REPO_URL}" "${PROJECT_PATH}"
 else
     echo "🔄 Pulling latest changes..."
-    if ! git -C "${PROJECT_DIR}" pull --ff-only; then
+    if ! git -C "${PROJECT_PATH}" pull --ff-only; then
         echo "⚠️  Fast-forward pull failed. Trying safe rebase update..."
-        git -C "${PROJECT_DIR}" fetch origin
-        git -C "${PROJECT_DIR}" checkout main
-        git -C "${PROJECT_DIR}" pull --rebase origin main
+        git -C "${PROJECT_PATH}" fetch origin
+        git -C "${PROJECT_PATH}" checkout main
+        git -C "${PROJECT_PATH}" pull --rebase origin main
     fi
 fi
 
-cd "${PROJECT_DIR}"
+if [ "$(id -u)" -eq 0 ]; then
+    $SUDO chown -R "${TARGET_USER}:${TARGET_USER}" "${PROJECT_PATH}" 2>/dev/null || true
+fi
+
+cd "${PROJECT_PATH}"
 chmod +x ./vps-manager.sh 2>/dev/null || true
 
 # ─────────────────────────────────────────
@@ -132,8 +156,7 @@ fi
 # ─────────────────────────────────────────
 # 8. SSH Hardening (if keys exist)
 # ─────────────────────────────────────────
-TARGET_USER="${SUDO_USER:-$USER}"
-HOME_DIR="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+HOME_DIR="${TARGET_HOME}"
 AUTH_KEYS="${HOME_DIR}/.ssh/authorized_keys"
 
 if [ -s "$AUTH_KEYS" ]; then
@@ -153,67 +176,67 @@ fi
 echo "📝 Creating helper scripts..."
 
 # Quick deploy script
-cat > ~/deploy-token.sh << 'EOF'
+cat > "${TARGET_HOME}/deploy-token.sh" << 'EOF'
 #!/bin/bash
 cd ~/clank-and-claw
 node deploy.js
 EOF
-chmod +x ~/deploy-token.sh
+chmod +x "${TARGET_HOME}/deploy-token.sh"
 
 # OpenClaw runner
-cat > ~/openclaw.sh << 'EOF'
+cat > "${TARGET_HOME}/openclaw.sh" << 'EOF'
 #!/bin/bash
 cd ~/clank-and-claw
 node openclaw-handler.js "$@"
 EOF
-chmod +x ~/openclaw.sh
+chmod +x "${TARGET_HOME}/openclaw.sh"
 
 # Unified manager launcher
-cat > ~/clawctl << 'EOF'
+cat > "${TARGET_HOME}/clawctl" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 cd ~/clank-and-claw
 bash ./vps-manager.sh "$@"
 EOF
-chmod +x ~/clawctl
+chmod +x "${TARGET_HOME}/clawctl"
 
-cat > ~/claw-wizard.sh << 'EOF'
+cat > "${TARGET_HOME}/claw-wizard.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl wizard
 EOF
-chmod +x ~/claw-wizard.sh
+chmod +x "${TARGET_HOME}/claw-wizard.sh"
 
-cat > ~/claw-update.sh << 'EOF'
+cat > "${TARGET_HOME}/claw-update.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl update "$@"
 EOF
-chmod +x ~/claw-update.sh
+chmod +x "${TARGET_HOME}/claw-update.sh"
 
-cat > ~/claw-doctor.sh << 'EOF'
+cat > "${TARGET_HOME}/claw-doctor.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl doctor "$@"
 EOF
-chmod +x ~/claw-doctor.sh
+chmod +x "${TARGET_HOME}/claw-doctor.sh"
 
-cat > ~/claw-uninstall.sh << 'EOF'
+cat > "${TARGET_HOME}/claw-uninstall.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl uninstall "$@"
 EOF
-chmod +x ~/claw-uninstall.sh
+chmod +x "${TARGET_HOME}/claw-uninstall.sh"
 
-cat > ~/claw-kubo.sh << 'EOF'
+cat > "${TARGET_HOME}/claw-kubo.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl kubo-install --yes "$@"
 EOF
-chmod +x ~/claw-kubo.sh
+chmod +x "${TARGET_HOME}/claw-kubo.sh"
 
 # Network diagnostics helper
-cat > ~/claw-netcheck.sh << 'EOF'
+cat > "${TARGET_HOME}/claw-netcheck.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 
@@ -243,10 +266,10 @@ echo "- Verify .env: RPC_URL / RPC_FALLBACK_URLS / TELEGRAM_API_BASES / IPFS_GAT
 echo "- If DNS unstable: sudo systemctl restart systemd-resolved"
 echo "- Use PM2 logs: pm2 logs clanker-bot"
 EOF
-chmod +x ~/claw-netcheck.sh
+chmod +x "${TARGET_HOME}/claw-netcheck.sh"
 
 # Telegram bot runner
-cat > ~/run-bot.sh << 'EOF'
+cat > "${TARGET_HOME}/run-bot.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 cd ~/clank-and-claw
@@ -274,81 +297,81 @@ echo "🤖 Starting Clank & Claw Telegram Bot..."
 echo "   Press Ctrl+C to stop"
 node telegram-bot.js
 EOF
-chmod +x ~/run-bot.sh
+chmod +x "${TARGET_HOME}/run-bot.sh"
 
 # PM2 start helper (recommended)
-cat > ~/bot-start.sh << 'EOF'
+cat > "${TARGET_HOME}/bot-start.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl start "$@"
 EOF
-chmod +x ~/bot-start.sh
+chmod +x "${TARGET_HOME}/bot-start.sh"
 
 # Telegram setup helper
-cat > ~/bot-setup.sh << 'EOF'
+cat > "${TARGET_HOME}/bot-setup.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl telegram-setup "$@"
 EOF
-chmod +x ~/bot-setup.sh
+chmod +x "${TARGET_HOME}/bot-setup.sh"
 
-cat > ~/ipfs-setup.sh << 'EOF'
+cat > "${TARGET_HOME}/ipfs-setup.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl ipfs-setup "$@"
 EOF
-chmod +x ~/ipfs-setup.sh
+chmod +x "${TARGET_HOME}/ipfs-setup.sh"
 
-cat > ~/kubo-setup.sh << 'EOF'
+cat > "${TARGET_HOME}/kubo-setup.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl kubo-install --yes "$@"
 EOF
-chmod +x ~/kubo-setup.sh
+chmod +x "${TARGET_HOME}/kubo-setup.sh"
 
-cat > ~/kubo-status.sh << 'EOF'
+cat > "${TARGET_HOME}/kubo-status.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl kubo-status "$@"
 EOF
-chmod +x ~/kubo-status.sh
+chmod +x "${TARGET_HOME}/kubo-status.sh"
 
-cat > ~/kubo-start.sh << 'EOF'
+cat > "${TARGET_HOME}/kubo-start.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl kubo-start "$@"
 EOF
-chmod +x ~/kubo-start.sh
+chmod +x "${TARGET_HOME}/kubo-start.sh"
 
-cat > ~/kubo-stop.sh << 'EOF'
+cat > "${TARGET_HOME}/kubo-stop.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl kubo-stop "$@"
 EOF
-chmod +x ~/kubo-stop.sh
+chmod +x "${TARGET_HOME}/kubo-stop.sh"
 
-cat > ~/kubo-restart.sh << 'EOF'
+cat > "${TARGET_HOME}/kubo-restart.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl kubo-restart "$@"
 EOF
-chmod +x ~/kubo-restart.sh
+chmod +x "${TARGET_HOME}/kubo-restart.sh"
 
-cat > ~/bot-stop.sh << 'EOF'
+cat > "${TARGET_HOME}/bot-stop.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl stop "$@"
 EOF
-chmod +x ~/bot-stop.sh
+chmod +x "${TARGET_HOME}/bot-stop.sh"
 
-cat > ~/bot-status.sh << 'EOF'
+cat > "${TARGET_HOME}/bot-status.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 ~/clawctl status "$@"
 EOF
-chmod +x ~/bot-status.sh
+chmod +x "${TARGET_HOME}/bot-status.sh"
 
-cat > ~/bot-enable-autostart.sh << 'EOF'
+cat > "${TARGET_HOME}/bot-enable-autostart.sh" << 'EOF'
 #!/bin/bash
 set -euo pipefail
 if ! command -v pm2 >/dev/null 2>&1; then
@@ -364,15 +387,19 @@ else
   echo "    pm2 save"
 fi
 EOF
-chmod +x ~/bot-enable-autostart.sh
+chmod +x "${TARGET_HOME}/bot-enable-autostart.sh"
 
 # Ensure log directory exists for PM2 ecosystem
-mkdir -p ~/clank-and-claw/logs
+mkdir -p "${PROJECT_PATH}/logs"
 
 # Install/repair Kubo local IPFS (best effort)
 echo "🧩 Ensuring local Kubo IPFS is installed..."
-if [ -x ~/clawctl ]; then
-    ~/clawctl kubo-install --yes || echo "⚠️  Kubo auto-install failed (run ~/claw-kubo.sh manually)"
+if [ -x "${PROJECT_PATH}/vps-manager.sh" ]; then
+    if ! bash "${PROJECT_PATH}/vps-manager.sh" kubo-install --yes; then
+        echo "⚠️  Kubo auto-install failed. Menampilkan status debug..."
+        bash "${PROJECT_PATH}/vps-manager.sh" kubo-status || true
+        echo "⚠️  Lanjutkan manual fix: ~/claw-kubo.sh"
+    fi
 fi
 
 # Quick network preflight summary

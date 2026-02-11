@@ -221,6 +221,66 @@ check_gateway_endpoint() {
     [[ "$code" =~ ^[1-4][0-9][0-9]$ ]]
 }
 
+normalize_http_endpoint() {
+    local value
+    value="$(echo "${1:-}" | tr -d '\r' | xargs)"
+    value="${value%\"}"
+    value="${value#\"}"
+    value="${value%\'}"
+    value="${value#\'}"
+    echo "${value%/}"
+}
+
+parse_url_host_port() {
+    local url="$1"
+    local scheme rest authority host port
+    scheme="${url%%://*}"
+    rest="${url#*://}"
+    authority="${rest%%/*}"
+
+    if [[ "$authority" == \[*\]* ]]; then
+        host="${authority#\[}"
+        host="${host%%\]*}"
+        local after_bracket="${authority#*\]}"
+        if [[ "$after_bracket" == :* ]]; then
+            port="${after_bracket#:}"
+        fi
+    else
+        host="${authority%%:*}"
+        if [[ "$authority" == *:* ]]; then
+            port="${authority##*:}"
+        fi
+    fi
+
+    if [ -z "${port:-}" ]; then
+        if [ "$scheme" = "https" ]; then
+            port="443"
+        else
+            port="80"
+        fi
+    fi
+
+    echo "$host $port"
+}
+
+is_loopback_host() {
+    local host="$1"
+    [ "$host" = "127.0.0.1" ] \
+        || [ "$host" = "localhost" ] \
+        || [ "$host" = "::1" ] \
+        || [ "$host" = "0:0:0:0:0:0:0:1" ]
+}
+
+is_tcp_port_reachable() {
+    local host="$1"
+    local port="$2"
+    if have_cmd nc; then
+        nc -z -w 2 "$host" "$port" >/dev/null 2>&1
+        return $?
+    fi
+    return 1
+}
+
 write_shortcut_script() {
     local path="$1"
     local command_line="$2"
@@ -247,6 +307,9 @@ ensure_home_shortcuts() {
     direct_script="bash \"$manager\""
 
     write_shortcut_script "$home/clawctl" "$direct_script"
+    write_shortcut_script "$home/deploy-token.sh" "cd \"$PROJECT_DIR\" && node deploy.js"
+    write_shortcut_script "$home/openclaw.sh" "cd \"$PROJECT_DIR\" && node openclaw-handler.js"
+    write_shortcut_script "$home/claw-netcheck.sh" "\"$home/clawctl\" netcheck"
     write_shortcut_script "$home/claw-wizard.sh" "\"$home/clawctl\" wizard"
     write_shortcut_script "$home/claw-update.sh" "\"$home/clawctl\" update"
     write_shortcut_script "$home/claw-doctor.sh" "\"$home/clawctl\" doctor"
@@ -265,9 +328,9 @@ ensure_home_shortcuts() {
 }
 
 check_kubo_api() {
-    local base="$1"
+    local base
+    base="$(normalize_http_endpoint "$1")"
     local endpoint
-    base="${base%/}"
     [ -n "$base" ] || return 1
 
     # Kubo RPC API endpoints are POST-based; GET can return 405 even when healthy.
@@ -276,9 +339,38 @@ check_kubo_api() {
     else
         endpoint="$base/api/v0/version"
     fi
+
+    local host port
+    read -r host port < <(parse_url_host_port "$base")
+    [ -n "${host:-}" ] || return 1
+    [ -n "${port:-}" ] || return 1
+
     local code
-    code="$(curl -sS --max-time 8 -o /dev/null -w '%{http_code}' -X POST --data '' "$endpoint" 2>/dev/null || true)"
-    [[ "$code" =~ ^2[0-9][0-9]$ ]]
+    if is_loopback_host "$host"; then
+        code="$(curl -sS --noproxy '*' --max-time 8 -o /dev/null -w '%{http_code}' -X POST --data '' "$endpoint" 2>/dev/null || true)"
+    else
+        code="$(curl -sS --max-time 8 -o /dev/null -w '%{http_code}' -X POST --data '' "$endpoint" 2>/dev/null || true)"
+    fi
+
+    # Kubo API can return non-2xx for malformed/blocked requests but still prove listener reachability.
+    if [[ "$code" =~ ^[234][0-9][0-9]$ ]]; then
+        return 0
+    fi
+
+    # Final fallback: if target TCP port is reachable, treat Kubo endpoint as up.
+    is_tcp_port_reachable "$host" "$port"
+}
+
+resolve_ipfs_binary() {
+    local candidate
+    for candidate in "$(command -v ipfs 2>/dev/null || true)" /usr/local/bin/ipfs /usr/bin/ipfs; do
+        [ -n "$candidate" ] || continue
+        if [ -x "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
 }
 
 kubo_service_name() {
@@ -292,6 +384,12 @@ kubo_is_active() {
 }
 
 ensure_kubo_service_template() {
+    local ipfs_bin
+    if ! ipfs_bin="$(resolve_ipfs_binary)"; then
+        err "Binary ipfs tidak ditemukan. Jalankan: bash vps-manager.sh kubo-install --force"
+        return 1
+    fi
+
     local tmp
     tmp="$(mktemp)"
     cat > "$tmp" <<'EOF'
@@ -304,7 +402,7 @@ Wants=network-online.target
 Type=simple
 User=%i
 Environment=IPFS_PATH=%h/.ipfs
-ExecStart=/usr/local/bin/ipfs daemon --migrate=true --enable-gc
+ExecStart=__IPFS_BIN__ daemon --migrate=true --enable-gc
 Restart=on-failure
 RestartSec=5
 LimitNOFILE=1048576
@@ -312,6 +410,7 @@ LimitNOFILE=1048576
 [Install]
 WantedBy=multi-user.target
 EOF
+    sed -i "s|__IPFS_BIN__|$ipfs_bin|g" "$tmp"
     run_as_root install -m 0644 "$tmp" /etc/systemd/system/kubo@.service
     rm -f "$tmp"
     run_as_root systemctl daemon-reload
@@ -376,6 +475,85 @@ ipfs config Addresses.Gateway /ip4/127.0.0.1/tcp/8080 >/dev/null
 '
 }
 
+repair_kubo_repo_permissions() {
+    local home user ipfs_dir
+    user="$(target_user)"
+    home="$(target_home)"
+    ipfs_dir="$home/.ipfs"
+
+    if [ -d "$ipfs_dir" ]; then
+        run_as_root chown -R "$user:$user" "$ipfs_dir" >/dev/null 2>&1 || true
+        run_as_root chmod 700 "$ipfs_dir" >/dev/null 2>&1 || true
+        if [ -f "$ipfs_dir/config" ]; then
+            run_as_root chmod 600 "$ipfs_dir/config" >/dev/null 2>&1 || true
+        fi
+    fi
+}
+
+print_kubo_debug_snapshot() {
+    local api="${1:-http://127.0.0.1:5001}"
+    local svc user home ipfs_bin
+    svc="$(kubo_service_name)"
+    user="$(target_user)"
+    home="$(target_home)"
+    ipfs_bin="$(resolve_ipfs_binary 2>/dev/null || true)"
+
+    echo ""
+    echo "===== KUBO DEBUG SNAPSHOT ====="
+    echo "Service: $svc"
+    echo "User: $user"
+    echo "Home: $home"
+    echo "Binary: ${ipfs_bin:-not found}"
+    echo "API: $api"
+
+    if [ -d "$home/.ipfs" ]; then
+        run_as_root ls -ld "$home/.ipfs" || true
+        if [ -f "$home/.ipfs/config" ]; then
+            run_as_root ls -l "$home/.ipfs/config" || true
+        else
+            warn "Repo $home/.ipfs ada tapi file config tidak ditemukan."
+        fi
+    else
+        warn "Repo $home/.ipfs belum ada."
+    fi
+
+    run_as_root systemctl status "$svc" --no-pager -n 20 || true
+    if have_cmd journalctl; then
+        run_as_root journalctl -u "$svc" --no-pager -n 40 || true
+    fi
+    if have_cmd ss; then
+        echo ""
+        echo "[Listening Ports 5001/8080]"
+        ss -lntp 2>/dev/null | grep -E ':(5001|8080)\b' || true
+    fi
+
+    if check_kubo_api "$api"; then
+        ok "API reachable saat debug: $api"
+    else
+        warn "API masih unreachable saat debug: $api"
+    fi
+}
+
+attempt_kubo_auto_repair() {
+    local api="${1:-http://127.0.0.1:5001}"
+    local svc
+    svc="$(kubo_service_name)"
+
+    warn "Mencoba auto-repair Kubo..."
+    ensure_kubo_repo || true
+    repair_kubo_repo_permissions
+    ensure_kubo_service_template || return 1
+    run_as_root systemctl daemon-reload || true
+    run_as_root systemctl restart "$svc" || true
+
+    if wait_for_kubo_api "$api" 15 1; then
+        ok "Kubo recovered: $api"
+        return 0
+    fi
+
+    return 1
+}
+
 set_local_kubo_env_defaults() {
     require_project
     cd "$PROJECT_DIR"
@@ -402,6 +580,7 @@ do_kubo_install() {
     fi
 
     ensure_kubo_repo
+    repair_kubo_repo_permissions
     ensure_kubo_service_template
     run_as_root systemctl enable --now "$svc"
     set_local_kubo_env_defaults
@@ -409,7 +588,13 @@ do_kubo_install() {
     if wait_for_kubo_api "http://127.0.0.1:5001" 25 1; then
         ok "Kubo aktif dan API reachable di http://127.0.0.1:5001"
     else
-        warn "Kubo service aktif tapi API belum reachable. Cek: bash vps-manager.sh kubo-status"
+        warn "Kubo service aktif tapi API belum reachable."
+        if attempt_kubo_auto_repair "http://127.0.0.1:5001"; then
+            return 0
+        fi
+        print_kubo_debug_snapshot "http://127.0.0.1:5001"
+        err "Kubo install selesai tapi API tidak sehat. Perbaiki log di atas lalu ulangi kubo-install."
+        return 1
     fi
 }
 
@@ -417,11 +602,17 @@ do_kubo_start() {
     local svc
     svc="$(kubo_service_name)"
     ensure_kubo_service_template
+    repair_kubo_repo_permissions
     run_as_root systemctl enable --now "$svc"
     if wait_for_kubo_api "http://127.0.0.1:5001" 15 1; then
         ok "Kubo started dan API reachable."
     else
         warn "Kubo started tapi API belum reachable."
+        if attempt_kubo_auto_repair "http://127.0.0.1:5001"; then
+            return 0
+        fi
+        print_kubo_debug_snapshot "http://127.0.0.1:5001"
+        return 1
     fi
 }
 
@@ -436,11 +627,17 @@ do_kubo_restart() {
     local svc
     svc="$(kubo_service_name)"
     ensure_kubo_service_template
+    repair_kubo_repo_permissions
     run_as_root systemctl restart "$svc"
     if wait_for_kubo_api "http://127.0.0.1:5001" 15 1; then
         ok "Kubo restarted dan API reachable."
     else
         warn "Kubo restarted tapi API belum reachable."
+        if attempt_kubo_auto_repair "http://127.0.0.1:5001"; then
+            return 0
+        fi
+        print_kubo_debug_snapshot "http://127.0.0.1:5001"
+        return 1
     fi
 }
 
@@ -471,6 +668,9 @@ show_kubo_status() {
     fi
 
     run_as_root systemctl status "$svc" --no-pager -n 20 || true
+    if have_cmd journalctl; then
+        run_as_root journalctl -u "$svc" --no-pager -n 30 || true
+    fi
 }
 
 ensure_kubo_runtime_if_configured() {
@@ -493,8 +693,10 @@ ensure_kubo_runtime_if_configured() {
             ok "Kubo recovered: $api"
             return 0
         fi
+        attempt_kubo_auto_repair "$api" || true
     fi
 
+    print_kubo_debug_snapshot "$api"
     warn "Kubo belum aktif. Jalankan: bash vps-manager.sh kubo-install"
     return 0
 }
@@ -733,6 +935,13 @@ setup_ipfs_env() {
                         do_kubo_install "$FORCE_MODE" || true
                     fi
                 fi
+
+                if ! wait_for_kubo_api "$kubo_api" 8 1; then
+                    warn "Kubo masih belum reachable setelah setup: $kubo_api"
+                    print_kubo_debug_snapshot "$kubo_api"
+                    return 1
+                fi
+                ok "Kubo API reachable setelah recovery: $kubo_api"
             fi
             ;;
         2)
@@ -1141,6 +1350,7 @@ do_doctor() {
             ipfs_upload_ready=1
         else
             warn "IPFS_KUBO_API set but unreachable: $ipfs_kubo_api"
+            warn "Cek detail: bash vps-manager.sh kubo-status"
             warned=$((warned + 1))
         fi
     fi

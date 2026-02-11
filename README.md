@@ -111,7 +111,13 @@ npm run test:ci
 
 ## VPS Production Workflow
 
-Recommended on VPS (PM2 + single instance):
+Bootstrap VPS terlebih dulu (wajib sebelum pakai `~/clawctl`):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Timcuan/clank-and-claw/main/vps-setup.sh | bash
+```
+
+Recommended on VPS (PM2 + single instance) setelah bootstrap:
 
 ```bash
 ~/clawctl kubo-install
@@ -154,6 +160,17 @@ Kubo lifecycle quick helpers:
 ~/kubo-start.sh
 ~/kubo-stop.sh
 ~/kubo-restart.sh
+```
+
+Important notes:
+- Jalankan bootstrap sebagai user operasional VPS (bukan root shell permanen), atau pakai user yang memang akan menjalankan bot.
+- Jika helper command tidak ditemukan setelah setup, jalankan:
+```bash
+bash ~/clank-and-claw/vps-manager.sh shortcuts
+```
+- Jika pernah install via root lalu permission bermasalah:
+```bash
+sudo chown -R "$USER:$USER" ~/clank-and-claw
 ```
 
 ## Telegram Command Surface
@@ -298,8 +315,9 @@ Do not keep placeholder token values in `.env`.
 
 1. `~/clawctl ipfs-setup`
 2. `~/clawctl doctor` (must show active IPFS upload backend)
-3. If using local Kubo, ensure daemon is running and `IPFS_KUBO_API` reachable.
-4. Retry sending image in `/a -> Settings -> Image`.
+3. If using local Kubo, run `~/clawctl kubo-status` (now includes recent service logs).
+4. If `IPFS_KUBO_API` still unreachable, run `~/clawctl kubo-install --force`.
+5. Retry sending image in `/a -> Settings -> Image`.
 
 ## Project Map
 

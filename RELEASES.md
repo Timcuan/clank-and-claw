@@ -27,6 +27,14 @@
 - **Test Script Standardization**: Added `npm run test:ci` and documented it in README.
 - **New Module Tests**: Added focused tests for lock, panel UI, session bridge, runtime health, API client, messenger, and deploy CLI hardening.
 
+### 🖥️ VPS Installer Reliability
+- **Target-Home Safe Setup**: `vps-setup.sh` now installs repo/helper scripts to the intended operator home, including sudo-invoked runs.
+- **Ownership Guardrail**: Setup now repairs repo ownership after root-context runs to prevent permission errors on later updates.
+- **Early Platform Checks**: Setup now fails fast with explicit message when `sudo` or `apt` prerequisites are missing.
+- **Bootstrap Docs Sync**: README/runbook now include explicit VPS bootstrap command and shortcut-repair guidance.
+- **Shortcut Repair Expanded**: `vps-manager.sh shortcuts` now also repairs `deploy-token`, `openclaw`, and `claw-netcheck`.
+- **Kubo Auto-Recovery + Debug**: Kubo lifecycle commands now try repo-permission/service repair automatically and print debug snapshot (systemd + journal + API probe) on failure.
+
 ---
 *Date: February 11, 2026*
 

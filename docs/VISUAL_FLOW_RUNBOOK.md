@@ -32,6 +32,18 @@ flowchart LR
 
 ## 2. Fresh VPS Setup Flow
 
+Bootstrap command (run once on fresh VPS):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Timcuan/clank-and-claw/main/vps-setup.sh | bash
+```
+
+If `~/clawctl` is missing after bootstrap, repair shortcuts:
+
+```bash
+bash ~/clank-and-claw/vps-manager.sh shortcuts
+```
+
 ```mermaid
 sequenceDiagram
     participant Admin as Operator

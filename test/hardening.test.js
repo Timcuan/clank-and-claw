@@ -800,6 +800,85 @@ test('loadTokenConfig reports line/column for invalid JSON', () => {
     }
 });
 
+test('loadTokenConfig accepts relaxed JSON syntax with flat aliases', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-token-relaxed-'));
+    const filePath = path.join(tmpDir, 'token.json');
+    fs.writeFileSync(filePath, `{
+  // comments are allowed
+  "name": "Relaxed Token",
+  "symbol": "RLX",
+  "image": "https://example.com/relaxed.png",
+  "description": "flat alias format",
+  "fee": "6%",
+  "contextUrl": "https://x.com/user/status/123456789",
+  "x": "https://x.com/relaxedtoken",
+}`);
+
+    try {
+        const cfg = loadTokenConfig(filePath);
+        assert.equal(cfg.fees.type, 'static');
+        assert.equal(cfg.fees.clankerFee, 300);
+        assert.equal(cfg.fees.pairedFee, 300);
+        assert.equal(cfg.context.platform, 'twitter');
+        assert.equal(cfg.context.messageId, '123456789');
+        assert.equal(cfg.metadata.description, 'flat alias format');
+        assert.equal(cfg.metadata.socialMediaUrls.some((s) => s.platform === 'x'), true);
+        assert.equal(cfg._meta.smartValidation, false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('loadTokenConfig allows helper keys inside fees object', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-token-fees-help-'));
+    const filePath = path.join(tmpDir, 'token.json');
+    fs.writeFileSync(filePath, JSON.stringify({
+        name: 'Fee Help Token',
+        symbol: 'FHT',
+        image: 'https://example.com/fee-help.png',
+        fees: {
+            mode: 'static',
+            note: 'manual edit note',
+            _help: 'keep custom values',
+            static: {
+                clankerFeeBps: 420,
+                pairedFeeBps: 180
+            }
+        },
+        context: { url: 'https://x.com/user/status/2222222222' }
+    }, null, 2));
+
+    try {
+        const cfg = loadTokenConfig(filePath);
+        assert.equal(cfg.fees.type, 'static');
+        assert.equal(cfg.fees.clankerFee, 420);
+        assert.equal(cfg.fees.pairedFee, 180);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('loadTokenConfig keeps literal string content while cleaning trailing commas', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-token-trailing-safe-'));
+    const filePath = path.join(tmpDir, 'token.json');
+    fs.writeFileSync(filePath, `{
+  "name": "Comma Token",
+  "symbol": "CMA",
+  "image": "https://example.com/comma.png",
+  "description": "literal ,} text should stay",
+  "fee": "5%",
+  "contextUrl": "https://x.com/user/status/3333333333",
+}`);
+
+    try {
+        const cfg = loadTokenConfig(filePath);
+        assert.equal(cfg.metadata.description, 'literal ,} text should stay');
+        assert.equal(cfg.context.messageId, '3333333333');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('openclaw-handler strict mode accepts context.url as context source', () => {
     const input = {
         name: 'OpenClaw Strict',

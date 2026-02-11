@@ -1,83 +1,31 @@
 {
-    "__comment": "🐾 CLANK & CLAW - Token Deployment Config",
-    "__version": "2.6",
-    "___SECTION_1_ESSENTIAL___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "name": "My Token",
-    "symbol": "TOKEN",
-    "image": "bafkreiabcd1234 or https://example.com/image.png",
-    "___SECTION_2_FEES___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "fees": {
-        "mode": "static",
-        "__mode_help": "Choose: static or dynamic",
-        "static": {
-            "clankerFeeBps": 300,
-            "pairedFeeBps": 300,
-            "__help": "Static fee in bps (100 bps = 1%). Custom values allowed."
-        },
-        "dynamic": {
-            "baseFeePercent": 1,
-            "maxFeePercent": 10,
-            "adjustmentPeriod": 3600,
-            "resetPeriod": 86400,
-            "resetTickFilter": 100,
-            "feeControlNumerator": 100000,
-            "decayFilterBps": 9500,
-            "__help": "Traffic-based fee model. Default dynamic range is 1% to 10%."
-        }
-    },
-    "___SECTION_3_CONTEXT___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "context": {
-        "platform": "twitter",
-        "url": "https://x.com/user/status/123456789"
-    },
-    "__context_help": "Context can use any source link. Platform and messageId are auto-detected from URL.",
-    "___SECTION_4_DESCRIPTION___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "description": "My amazing token - deployed with Clank & Claw",
-    "___SECTION_5_SOCIALS___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "socials": {
-        "x": "https://x.com/mytoken",
-        "website": "https://mytoken.com",
-        "telegram": "https://t.me/mytoken",
-        "farcaster": "https://warpcast.com/mytoken"
-    },
-    "__socials_help": "All optional. Leave empty if not available",
-    "___SECTION_6_SPOOFING___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "spoof": {
-        "enabled": false,
-        "ourWallet": "0xYourRealWallet",
-        "targetAddress": "0xAddressThatAppearsAsDeployer"
-    },
-    "__spoof_help": "99.9% fees → ourWallet, 0.1% → targetAddress (appears as deployer)",
-    "___SECTION_7_ADVANCED___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "advanced": {
-        "admin": "",
-        "__admin_help": "Token admin address. Leave empty to use deployer wallet",
-        "devBuy": 0,
-        "__devBuy_help": "Auto-buy amount in ETH (e.g., 0.01). Set to 0 to skip",
-        "vanity": true,
-        "__vanity_help": "Use vanity address if available",
-        "smartValidation": false,
-        "__smartValidation_help": "false = no auto-correct for token.json edits (strict validation)",
-        "strictMode": false,
-        "__strictMode_help": "Enforce Clankerworld Blue Badge rules (use 'farcaster', max 5% fees, etc.)"
-    },
-    "___SECTION_8_SNIPER_PROTECTION___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "antiBot": {
-        "enabled": false,
-        "startingFee": 6667.77,
-        "__startingFee_help": "Initial anti-bot fee% (default: 6667.77%)",
-        "endingFee": 416.73,
-        "__endingFee_help": "Final fee% after decay (default: 416.73%)",
-        "decaySeconds": 15,
-        "__decaySeconds_help": "Time for fees to decay to normal (default: 15s)"
-    },
-    "___SECTION_9_POOL_CONFIG___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "pool": {
-        "pairedToken": "WETH",
-        "__pairedToken_help": "Token to pair with (default: WETH)",
-        "startingTick": -230400,
-        "__startingTick_help": "Initial pool tick position",
-        "type": "Standard",
-        "__type_help": "Pool type: Standard, Narrow, Wide"
-    }
+  "_guide": "Human-edit mode: comments via _keys, trailing commas and // comments are accepted.",
+  "_guide_fee": "Use simple fee string: 6%, 600bps, or split 3% 3%.",
+  "name": "My Token",
+  "symbol": "TOKEN",
+  "image": "https://example.com/image.png",
+  "description": "Short token description",
+  "fee": "6%",
+  "contextUrl": "https://x.com/user/status/123456789",
+  "x": "https://x.com/mytoken",
+  "website": "https://mytoken.com",
+  "telegram": "https://t.me/mytoken",
+  "spoof": {
+    "enabled": false,
+    "ourWallet": "0xYourRealWallet",
+    "targetAddress": "0xAddressThatAppearsAsDeployer"
+  },
+  "advanced": {
+    "devBuy": 0,
+    "vanity": true,
+    "strictMode": false
+  },
+  "pool": {
+    "pairedToken": "WETH",
+    "startingTick": -230400,
+    "type": "Standard"
+  },
+  "antiBot": {
+    "enabled": false
+  }
 }

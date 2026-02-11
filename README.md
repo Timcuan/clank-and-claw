@@ -54,7 +54,8 @@ flowchart LR
 - Invalid strict-mode requirements -> auto-relax to standard mode
 
 Notes:
-- `token.json` flow can control strictness via `advanced.smartValidation`.
+- `token.json` runs strict manual mode (no auto-correct for core fields).
+- `token.json` accepts human-friendly syntax (`//` comments, trailing commas) and flat aliases (`fee`, `contextUrl`, top-level socials).
 - `token.json` supports `fees.mode = static | dynamic` with explicit parameters.
 - Preflight output includes smart-fix summary.
 

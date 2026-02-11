@@ -8,8 +8,6 @@
 
 import fs from 'fs';
 import readline from 'readline';
-import { getProviderStatus } from './lib/ipfs.js';
-
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
@@ -32,6 +30,13 @@ const log = {
     warn: (m) => console.log(`${colors.yellow}⚠${colors.reset} ${m}`),
     error: (m) => console.log(`${colors.red}✗${colors.reset} ${m}`),
     dim: (m) => console.log(`${colors.dim}${m}${colors.reset}`)
+};
+
+const isTruthy = (value) => ['true', '1', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+const isPlaceholderTelegramToken = (token) => {
+    const cleaned = String(token || '').trim();
+    if (!cleaned) return false;
+    return cleaned.includes('REPLACE_ME') || cleaned.includes('YOUR_') || cleaned === '123456789:REPLACE_ME';
 };
 
 console.log(`
@@ -76,29 +81,38 @@ async function main() {
     env.RPC_URL = env.RPC_URL || 'https://mainnet.base.org';
 
     // ─── TELEGRAM ───
-    console.log(`\n${colors.green}═══ 2. TELEGRAM BOT (Optional) ═══${colors.reset}\n`);
+    console.log(`\n${colors.green}═══ 2. TELEGRAM BOT SETUP ═══${colors.reset}\n`);
+    log.info('Telegram bot is required for chat deployment flow');
+    log.dim('Get token from: @BotFather on Telegram');
 
-    if (env.TELEGRAM_BOT_TOKEN) {
-        log.ok('Telegram bot configured');
+    const currentToken = String(env.TELEGRAM_BOT_TOKEN || '').trim();
+    if (currentToken && !isPlaceholderTelegramToken(currentToken)) {
+        log.ok('Telegram bot token configured');
+        const change = await ask('Change bot token? (y/N): ');
+        if (change.toLowerCase() === 'y') {
+            env.TELEGRAM_BOT_TOKEN = await ask('Bot Token (123456789:ABC...): ');
+        }
     } else {
-        log.info('Setup Telegram bot to deploy from chat');
-        log.dim('Get token from: @BotFather on Telegram');
-        const token = await ask('\nBot Token (or Enter to skip): ');
-        if (token) env.TELEGRAM_BOT_TOKEN = token;
+        if (currentToken && isPlaceholderTelegramToken(currentToken)) {
+            log.warn('Current TELEGRAM_BOT_TOKEN is still placeholder.');
+        }
+        env.TELEGRAM_BOT_TOKEN = await ask('\nBot Token (123456789:ABC...): ');
     }
 
     // ─── IPFS ───
-    console.log(`\n${colors.green}═══ 3. IPFS PROVIDER ═══${colors.reset}\n`);
-    console.log('Choose one (all are free):');
-    console.log('  1. NFT.Storage (recommended) - nft.storage');
-    console.log('  2. Pinata - pinata.cloud');
-    console.log('  3. Infura - infura.io');
-    console.log('  4. Skip (use existing CIDs only)\n');
+    console.log(`\n${colors.green}═══ 3. IPFS UPLOAD BACKEND ═══${colors.reset}\n`);
+    console.log('Runtime upload priority: Local Kubo -> Pinata -> Legacy providers');
+    console.log('Choose primary setup:');
+    console.log('  1. Local Kubo node (recommended, no API key)');
+    console.log('  2. Pinata (API key + secret)');
+    console.log('  3. Legacy Infura IPFS (requires legacy enable)');
+    console.log('  4. Legacy NFT.Storage Classic (requires legacy enable)');
+    console.log('  5. Skip (use existing config)\n');
 
-    const hasProvider = env.NFT_STORAGE_TOKEN || (env.PINATA_API_KEY && env.PINATA_SECRET_KEY) || env.INFURA_PROJECT_ID;
+    const hasProvider = hasAnyConfiguredUploader(env);
 
     if (hasProvider) {
-        log.ok('IPFS provider configured');
+        log.ok('IPFS upload backend already configured');
         const change = await ask('Change provider? (y/N): ');
         if (change.toLowerCase() !== 'y') {
             // Skip
@@ -145,12 +159,15 @@ TELEGRAM_ADMIN_IDS=${env.TELEGRAM_ADMIN_IDS || ''}
 TELEGRAM_API_BASES=${env.TELEGRAM_API_BASES || 'https://api.telegram.org'}
 TELEGRAM_FILE_BASE=${env.TELEGRAM_FILE_BASE || ''}
 
-# ─── IPFS PROVIDERS ───────────────────────
-NFT_STORAGE_TOKEN=${env.NFT_STORAGE_TOKEN || ''}
+# ─── IPFS UPLOAD (local-first) ────────────
+IPFS_KUBO_API=${env.IPFS_KUBO_API || 'http://127.0.0.1:5001'}
 PINATA_API_KEY=${env.PINATA_API_KEY || ''}
 PINATA_SECRET_KEY=${env.PINATA_SECRET_KEY || ''}
 INFURA_PROJECT_ID=${env.INFURA_PROJECT_ID || ''}
 INFURA_SECRET=${env.INFURA_SECRET || ''}
+ENABLE_INFURA_IPFS_LEGACY=${env.ENABLE_INFURA_IPFS_LEGACY || 'false'}
+NFT_STORAGE_TOKEN=${env.NFT_STORAGE_TOKEN || ''}
+ENABLE_NFT_STORAGE_CLASSIC=${env.ENABLE_NFT_STORAGE_CLASSIC || 'false'}
 IPFS_GATEWAYS=${env.IPFS_GATEWAYS || ''}
 
 # ─── OPTIONAL DEFAULTS ────────────────────
@@ -159,9 +176,41 @@ DEFAULT_IMAGE_URL=${env.DEFAULT_IMAGE_URL || ''}
 VANITY=${env.VANITY || 'true'}
 REQUIRE_CONTEXT=${env.REQUIRE_CONTEXT || 'true'}
 SMART_VALIDATION=${env.SMART_VALIDATION || 'true'}
+CONFIG_STORE_PATH=${env.CONFIG_STORE_PATH || './data/bot-config-store.json'}
 `;
 
-    fs.writeFileSync(envPath, envContent);
+    const managedKeys = new Set([
+        'PRIVATE_KEY',
+        'RPC_URL',
+        'RPC_FALLBACK_URLS',
+        'TELEGRAM_BOT_TOKEN',
+        'TELEGRAM_ADMIN_IDS',
+        'TELEGRAM_API_BASES',
+        'TELEGRAM_FILE_BASE',
+        'IPFS_KUBO_API',
+        'PINATA_API_KEY',
+        'PINATA_SECRET_KEY',
+        'INFURA_PROJECT_ID',
+        'INFURA_SECRET',
+        'ENABLE_INFURA_IPFS_LEGACY',
+        'NFT_STORAGE_TOKEN',
+        'ENABLE_NFT_STORAGE_CLASSIC',
+        'IPFS_GATEWAYS',
+        'DEFAULT_CONTEXT_ID',
+        'DEFAULT_IMAGE_URL',
+        'VANITY',
+        'REQUIRE_CONTEXT',
+        'SMART_VALIDATION',
+        'CONFIG_STORE_PATH'
+    ]);
+    const extras = Object.entries(env)
+        .filter(([key]) => key && !managedKeys.has(key))
+        .sort(([a], [b]) => a.localeCompare(b));
+    const extrasBlock = extras.length > 0
+        ? `\n# ─── CUSTOM / PRESERVED KEYS ─────────────\n${extras.map(([k, v]) => `${k}=${v || ''}`).join('\n')}\n`
+        : '\n';
+
+    fs.writeFileSync(envPath, envContent + extrasBlock);
     log.ok('.env saved!');
 
     // Create token.json if doesn't exist
@@ -195,29 +244,50 @@ ${colors.yellow}Files:${colors.reset}
 }
 
 async function setupIPFS(env) {
-    const choice = await ask('Choice (1-4): ');
+    const choice = await ask('Choice (1-5): ');
 
     switch (choice) {
         case '1':
-            log.info('NFT.Storage is free with no credit card');
-            log.dim('1. Go to https://nft.storage');
-            log.dim('2. Sign in with GitHub/Email');
-            log.dim('3. Create API Key');
-            env.NFT_STORAGE_TOKEN = await ask('\nNFT.Storage Token: ');
+            log.info('Local Kubo node selected (recommended)');
+            env.IPFS_KUBO_API = await ask('IPFS_KUBO_API [http://127.0.0.1:5001]: ');
+            if (!String(env.IPFS_KUBO_API || '').trim()) {
+                env.IPFS_KUBO_API = 'http://127.0.0.1:5001';
+            }
+            env.ENABLE_INFURA_IPFS_LEGACY = 'false';
+            env.ENABLE_NFT_STORAGE_CLASSIC = 'false';
             break;
         case '2':
-            log.info('Pinata free tier: 1GB storage');
+            log.info('Pinata selected');
             env.PINATA_API_KEY = await ask('Pinata API Key: ');
             env.PINATA_SECRET_KEY = await ask('Pinata Secret Key: ');
+            env.ENABLE_INFURA_IPFS_LEGACY = 'false';
+            env.ENABLE_NFT_STORAGE_CLASSIC = 'false';
             break;
         case '3':
-            log.info('Infura free tier: 5GB/month');
+            log.warn('Legacy Infura mode selected');
             env.INFURA_PROJECT_ID = await ask('Infura Project ID: ');
             env.INFURA_SECRET = await ask('Infura Secret (optional): ');
+            env.ENABLE_INFURA_IPFS_LEGACY = 'true';
+            break;
+        case '4':
+            log.warn('Legacy NFT.Storage classic mode selected');
+            env.NFT_STORAGE_TOKEN = await ask('NFT.Storage Token: ');
+            env.ENABLE_NFT_STORAGE_CLASSIC = 'true';
+            break;
+        case '5':
+            log.warn('Skipped. Existing IPFS configuration preserved.');
             break;
         default:
-            log.warn('Skipped. You can only use existing IPFS CIDs.');
+            log.warn('Unknown choice. Existing IPFS configuration preserved.');
     }
+}
+
+function hasAnyConfiguredUploader(env) {
+    const hasKubo = !!String(env.IPFS_KUBO_API || '').trim();
+    const hasPinata = !!(String(env.PINATA_API_KEY || '').trim() && String(env.PINATA_SECRET_KEY || '').trim());
+    const hasInfura = !!String(env.INFURA_PROJECT_ID || '').trim() && isTruthy(env.ENABLE_INFURA_IPFS_LEGACY);
+    const hasNftStorage = !!String(env.NFT_STORAGE_TOKEN || '').trim() && isTruthy(env.ENABLE_NFT_STORAGE_CLASSIC);
+    return hasKubo || hasPinata || hasInfura || hasNftStorage;
 }
 
 main().catch(console.error);

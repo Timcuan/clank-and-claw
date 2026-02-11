@@ -112,16 +112,16 @@ npm run test:ci
 
 ## VPS Production Workflow
 
-SOP lengkap install + repair:
+Full install and repair SOP:
 - `docs/VPS_INSTALL_REPAIR_SOP.md`
 
-Bootstrap VPS terlebih dulu (wajib sebelum pakai `~/clawctl`):
+Bootstrap the VPS first (required before using `~/clawctl`):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Timcuan/clank-and-claw/main/vps-setup.sh | bash
 ```
 
-Recommended on VPS (PM2 + single instance) setelah bootstrap:
+Recommended VPS flow (PM2 + single instance) after bootstrap:
 
 ```bash
 ~/clawctl kubo-install
@@ -167,12 +167,12 @@ Kubo lifecycle quick helpers:
 ```
 
 Important notes:
-- Jalankan bootstrap sebagai user operasional VPS (bukan root shell permanen), atau pakai user yang memang akan menjalankan bot.
-- Jika helper command tidak ditemukan setelah setup, jalankan:
+- Run bootstrap as the operational VPS user (avoid staying on a permanent root shell), or use the exact user that will run the bot.
+- If helper commands are missing after setup, run:
 ```bash
 bash ~/clank-and-claw/vps-manager.sh shortcuts
 ```
-- Jika pernah install via root lalu permission bermasalah:
+- If setup was previously run as root and permissions are broken:
 ```bash
 sudo chown -R "$USER:$USER" ~/clank-and-claw
 ```

@@ -49,7 +49,7 @@ Smart mode is enabled by default (`SMART_VALIDATION=true`).
 |---|---|---|
 | Name/Symbol | Missing or malformed | Generate safe fallback and normalize |
 | Image | Missing/invalid URL/CID | Apply fallback image (`DEFAULT_IMAGE_URL` or default CID gateway) |
-| Fees | Too high / invalid format | Clamp/reset to protocol-safe fee (max 5%) |
+| Fees | Too high / invalid format | Clamp/reset to protocol-safe fee (max 6%) |
 | Context | Missing message ID | Use `DEFAULT_CONTEXT_ID`, else synthetic context |
 | Social URLs | Bare/partial URLs | Normalize to valid `https://...` or drop invalid entries |
 | Rewards | Invalid bps/admin/recipient | Drop broken recipients and rebalance to 10000 bps |

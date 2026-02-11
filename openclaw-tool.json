@@ -39,12 +39,12 @@
                     "clankerFee": {
                         "type": "integer",
                         "description": "Token side fee in bps",
-                        "default": 100
+                        "default": 300
                     },
                     "pairedFee": {
                         "type": "integer",
                         "description": "WETH side fee in bps",
-                        "default": 100
+                        "default": 300
                     }
                 }
             },

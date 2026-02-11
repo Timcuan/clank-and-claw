@@ -494,7 +494,7 @@ const handleHelp = async (chatId) => {
 
 *🚀 Fastest Method:*
 \`/go SYMBOL "Name" FEES\`
-Example: \`/go DOGE "Moon Doge" 10%\`
+Example: \`/go DOGE "Moon Doge" 6%\`
 
 *📝 Step-by-Step:*
 1. \`/deploy\` → Start wizard
@@ -503,7 +503,7 @@ Example: \`/go DOGE "Moon Doge" 10%\`
 4. Send tweet link → Confirm → Done!
 
 *💬 Natural Language:*
-Just type: _"Launch PEPE (Pepe Token) 5%"_
+Just type: _"Launch PEPE (Pepe Token) 6%"_
 Bot auto-detects name, symbol, fees!
 
 *🎭 Spoofing Mode:*
@@ -511,10 +511,10 @@ Bot auto-detects name, symbol, fees!
 Rewards go to stealth wallet (or reset ke default).
 
 *💰 Fee Formats:*
-\`10%\` → 5%+5% split
-\`5% 5%\` → Explicit split  
-\`500bps\` → 500 basis points
-\`500\` → Total bps
+\`6%\` → 3%+3% split
+\`3% 3%\` → Explicit split  
+\`600bps\` → 600 basis points
+\`600\` → Total bps
 
 *📸 Images:*
 Send any image → Auto IPFS upload
@@ -730,12 +730,12 @@ const handleGo = async (chatId, args) => {
 ❌ *Could not parse symbol*
 
 *Format:* \`/go SYMBOL "Name" FEES\`
-*Example:* \`/go PEPE "Pepe Token" 10%\`
+*Example:* \`/go PEPE "Pepe Token" 6%\`
 
 Tips:
 • Symbol must be UPPERCASE
 • Name in quotes or parentheses
-• Fees: 10%, 500bps, or 5% 5%
+• Fees: 6%, 600bps, or 3% 3%
         `.trim());
     }
 
@@ -863,9 +863,9 @@ What's the ticker? (e.g., PEPE)
 ✅ Symbol: *${session.token.symbol}*
 
 *Step 3/4: Fees*
-Enter total fee % (or /skip for 2%)
+Enter total fee % (or /skip for 6%)
 
-_Examples: 10%, 500bps, 5% 5%_
+_Examples: 6%, 600bps, 3% 3%_
             `.trim());
 
         case 'wizard_fees':
@@ -874,7 +874,7 @@ _Examples: 10%, 500bps, 5% 5%_
             } else {
                 const fees = parseFees(text);
                 if (!fees) {
-                    return await sendMessage(chatId, '❌ Invalid. Try: `10%`, `500bps`, or `5% 5%`');
+                    return await sendMessage(chatId, '❌ Invalid. Try: `6%`, `600bps`, or `3% 3%`');
                 }
                 session.token.fees = fees;
             }
@@ -900,7 +900,7 @@ _Examples: 10%, 500bps, 5% 5%_
 
                 session.state = 'collecting';
 
-                const totalFee = (session.token.fees?.clankerFee + session.token.fees?.pairedFee) / 100 || 2;
+                const totalFee = (session.token.fees?.clankerFee + session.token.fees?.pairedFee) / 100 || 6;
 
                 await sendMessage(chatId, `
 🎯 *Detected:* ${session.token.symbol} "${session.token.name || session.token.symbol}"

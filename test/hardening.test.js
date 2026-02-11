@@ -177,6 +177,62 @@ test('loadConfig parses quoted VANITY env as true', () => {
     }
 });
 
+test('loadConfig defaults static fees to 300 + 300 bps when env fees are missing', () => {
+    const keys = ['FEE_TYPE', 'FEE_CLANKER_BPS', 'FEE_PAIRED_BPS', 'TOKEN_IMAGE'];
+    const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+
+    process.env.FEE_TYPE = 'static';
+    process.env.TOKEN_IMAGE = 'https://example.com/default-fees.png';
+    delete process.env.FEE_CLANKER_BPS;
+    delete process.env.FEE_PAIRED_BPS;
+
+    try {
+        const cfg = loadConfig();
+        assert.equal(cfg.fees.type, 'static');
+        assert.equal(cfg.fees.clankerFee, 300);
+        assert.equal(cfg.fees.pairedFee, 300);
+    } finally {
+        for (const k of keys) {
+            if (prev[k] === undefined) delete process.env[k];
+            else process.env[k] = prev[k];
+        }
+    }
+});
+
+test('validateConfig caps static fees above 6% back to default 3% + 3%', () => {
+    const config = baseConfig();
+    config.fees = { type: 'static', clankerFee: 700, pairedFee: 700 };
+    const validated = validateConfig(config);
+
+    assert.equal(validated.fees.clankerFee, 300);
+    assert.equal(validated.fees.pairedFee, 300);
+});
+
+test('loadTokenConfig prefers context URL ID when messageId mismatches', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-context-'));
+    const filePath = path.join(tmpDir, 'token.json');
+    const payload = {
+        name: 'Ctx Token',
+        symbol: 'CTX',
+        image: 'https://example.com/ctx.png',
+        fees: '5%',
+        context: {
+            platform: 'twitter',
+            messageId: '1850000000000000000',
+            url: 'https://x.com/mochatdotio/status/2020922261352706275?s=20'
+        }
+    };
+    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+
+    try {
+        const cfg = loadTokenConfig(filePath);
+        assert.equal(cfg.context.messageId, '2020922261352706275');
+        assert.equal(cfg._meta.contextSource, 'context-url');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('createConfigFromSession normalizes social URLs for metadata', () => {
     const sessionToken = {
         name: 'Norma',

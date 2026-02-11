@@ -7,7 +7,7 @@
   "name": "My Token",
   "symbol": "TOKEN",
   "image": "bafkreiabcd1234",
-  "fees": "10%",
+  "fees": "6%",
   "context": {
     "platform": "twitter",
     "url": "https://x.com/user/status/123456789"
@@ -28,7 +28,7 @@ If you get stuck or the bot doesn't understand, it will:
 ### Commands
 - `/start` - Check system status (IPFS, Wallet)
 - `/deploy` - Start the deployment wizard
-- `/go SYMBOL "Name" 10%` - Quick deploy in one line
+- `/go SYMBOL "Name" 6%` - Quick deploy in one line
 - `/spoof 0x...` - Enable spoofing for the active session
 - `/spoof off` - Disable spoofing for the active session
 - `/health` - Deep health check for Telegram and RPC endpoints
@@ -46,15 +46,15 @@ If you get stuck or the bot doesn't understand, it will:
 
 | Format | Example | Result |
 |--------|---------|--------|
-| Percentage | `"10%"` | 5% + 5% |
-| Split | `"5% 5%"` | 5% + 5% |
-| BPS Total | `"1000"` | 5% + 5% |
-| BPS Split | `"500 500"` | 5% + 5% |
-| Natural | `"with 10 percent fees"` | 5% + 5% |
+| Percentage | `"6%"` | 3% + 3% |
+| Split | `"3% 3%"` | 3% + 3% |
+| BPS Total | `"600"` | 3% + 3% |
+| BPS Split | `"300 300"` | 3% + 3% |
+| Natural | `"with 6 percent fees"` | 3% + 3% |
 
 ### 📢 Default Standards (v2.6.2+)
 If no fees are provided, the system defaults to:
-- **Static Fees:** 5% Total (2.5% Clanker + 2.5% Paired)
+- **Static Fees:** 6% Total (3% Clanker + 3% Paired)
 - **Dynamic Fees:** 1% Base - 10% Max
 
 ## Context Platforms
@@ -149,7 +149,7 @@ If no fees are provided, the system defaults to:
   "name": "Moon Token",
   "symbol": "MOON",
   "image": "bafkreixyz123",
-  "fees": "10%",
+  "fees": "6%",
   
   "context": {
     "platform": "twitter",
@@ -199,7 +199,7 @@ Recommended env guardrail:
 ✅ **Do:**
 ```json
 {
-  "fees": "10%",
+  "fees": "6%",
   "context": {
     "url": "https://x.com/user/status/123456789"
   }

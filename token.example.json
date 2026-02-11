@@ -6,8 +6,8 @@
     "symbol": "TOKEN",
     "image": "bafkreiabcd1234 or https://example.com/image.png",
     "___SECTION_2_FEES___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "fees": "5%",
-    "__fees_help": "Examples: '10%', '5% 5%', '1000bps', '500 500'",
+    "fees": "6%",
+    "__fees_help": "Examples: '6%', '3% 3%', '600bps', '300 300'",
     "___SECTION_3_CONTEXT___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     "context": {
         "platform": "twitter",

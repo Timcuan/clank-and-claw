@@ -43,7 +43,7 @@ Detailed system documentation and sequence diagrams: `docs/SYSTEM_ARCHITECTURE.m
 
 `SMART_VALIDATION=true` enables auto-heal behavior:
 
-- High fees (e.g. `20%`) are auto-capped to protocol-safe max (`5%` total)
+- High fees (e.g. `20%`) are auto-capped to protocol-safe max (`6%` total)
 - Missing image gets fallback from `DEFAULT_IMAGE_URL` (or default CID gateway)
 - Missing context gets fallback from `DEFAULT_CONTEXT_ID`; if absent, synthetic context is generated
 - Invalid social links are normalized or dropped

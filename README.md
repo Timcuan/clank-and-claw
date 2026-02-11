@@ -104,6 +104,11 @@ Hardening suite:
 npm run test:hardening
 ```
 
+CI/local full test suite:
+```bash
+npm run test:ci
+```
+
 ## VPS Production Workflow
 
 Recommended on VPS (PM2 + single instance):

@@ -1,3 +1,37 @@
+# 🚀 Release Notes - Clank & Claw (Unreleased - Bot Modularization + Deploy Guardrails)
+
+### 🧰 Deploy CLI Hardening
+- **Strict Argument Parser**: `deploy.js` now fails fast on unknown flags, duplicate JSON files, and invalid argument combinations.
+- **`--help` and Usage Docs**: Added explicit CLI usage output for safer ops handoff.
+- **Spoof Guardrails**: `--spoof` now requires a valid `0x` EVM address and explicit value.
+- **Private Key Validation**: PRIVATE_KEY is normalized and validated before spoof reward/account derivation.
+- **File Load Safety**: Missing JSON config now fails immediately instead of silently falling through.
+
+### 🧩 Telegram Bot Modularization
+- **Lock Manager Extraction**: Added `lib/bot-lock.js` for single-instance lock lifecycle and stale-lock recovery.
+- **Telegram API Client Extraction**: Added `lib/telegram-api-client.js` for origin failover, retry timing, and file URL construction.
+- **Messenger Extraction**: Added `lib/telegram-messenger.js` to centralize send/edit/button/file behavior with markdown fallbacks.
+- **Runtime Health Extraction**: Added `lib/runtime-health.js` for `/health` probing helpers and normalized health error formatting.
+- **Session Draft Bridge Extraction**: Added `lib/bot-session.js` to isolate draft hydration/persistence behavior.
+- **Panel UI Extraction**: Added `lib/bot-panel-ui.js` for action constants, readiness checks, and panel rendering.
+
+### ✅ Readiness & Session Integrity
+- **Ready-State Fix**: Panel readiness now requires valid `name`, `symbol`, and `fees` instead of always showing ready.
+- **Required Prompt UX**: Bot now sends explicit required-field prompts before deployment when config is incomplete.
+- **Session Normalization**: Draft restore now normalizes invalid/negative fee values and trims socials consistently.
+- **Config Store Optimization**: Draft saves skip redundant disk writes when no actual data changes.
+- **Draft Clear Optimization**: `clearDraft` is now a no-op when draft is already empty.
+
+### 🧪 CI & Regression Coverage
+- **CI Workflow Added**: New `.github/workflows/ci.yml` runs install + test on push/PR.
+- **Test Script Standardization**: Added `npm run test:ci` and documented it in README.
+- **New Module Tests**: Added focused tests for lock, panel UI, session bridge, runtime health, API client, messenger, and deploy CLI hardening.
+
+---
+*Date: February 11, 2026*
+
+---
+
 # 🚀 Release Notes - Clank & Claw (Unreleased - IPFS Backend Hardening)
 
 ### 📷 Image -> CID Reliability

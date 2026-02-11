@@ -15,15 +15,36 @@
 
 import 'dotenv/config';
 import https from 'https';
-import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { processImageInput, isIPFSCid, getProviderStatus } from './lib/ipfs.js';
 import { parseTokenCommand, parseFees } from './lib/parser.js';
 import { parseSmartSocialInput } from './lib/social-parser.js';
+import {
+    formatHealthError,
+    listEnabledIpfsProviders,
+    getStatusRpcCandidates,
+    probeTelegramOrigin,
+    probeRpcEndpoint
+} from './lib/runtime-health.js';
+import {
+    UI_ACTIONS,
+    PROFILE_INPUT_STATES,
+    canAcceptImageInput,
+    getReadyStatus,
+    getSettingsButtons,
+    getFallbackButtons,
+    getProfileButtons,
+    renderFieldValue,
+    formatSessionPanel
+} from './lib/bot-panel-ui.js';
+import { createSessionDraftBridge } from './lib/bot-session.js';
+import { createTelegramMessenger } from './lib/telegram-messenger.js';
 import { validateConfig } from './lib/validator.js';
 import { deployToken } from './clanker-core.js';
 import { handleFallback } from './lib/fallback.js';
+import { createBotLock } from './lib/bot-lock.js';
+import { createTelegramApiClient } from './lib/telegram-api-client.js';
 import { sessionManager, DEFAULT_SESSION_FEES } from './lib/session-manager.js';
 import { createConfigFromSession } from './lib/config.js';
 import { isRetryableTelegramApiResult } from './lib/telegram-network.js';
@@ -70,14 +91,8 @@ const parsedAdmins = parseAdminAllowlist(process.env.TELEGRAM_ADMIN_IDS);
 const ADMIN_CHAT_IDS = parsedAdmins.ids;
 const SKIPPED_ADMIN_PLACEHOLDERS = parsedAdmins.placeholderCount;
 const DEFAULT_FEES = DEFAULT_SESSION_FEES;
-const MARKDOWN_ERROR_TEXT = 'parse entities';
-const MAX_TELEGRAM_TEXT_LENGTH = 3900;
 const ETH_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
-const DEFAULT_TELEGRAM_ORIGIN = 'https://api.telegram.org';
-const DEFAULT_RPC_URL = 'https://mainnet.base.org';
-const MESSAGE_NOT_MODIFIED_TEXT = 'message is not modified';
 const TELEGRAM_HEALTH_TIMEOUT_MS = 12000;
-const RPC_HEALTH_TIMEOUT_MS = 10000;
 const FATAL_CONFIG_EXIT_CODE = 2;
 const TELEGRAM_CONFLICT_BACKOFF_MS = Math.max(5000, Number(process.env.TELEGRAM_CONFLICT_BACKOFF_MS || 30000));
 const TELEGRAM_MAX_CONFLICT_BACKOFF_MS = Math.max(TELEGRAM_CONFLICT_BACKOFF_MS, Number(process.env.TELEGRAM_MAX_CONFLICT_BACKOFF_MS || 300000));
@@ -98,40 +113,17 @@ const TELEGRAM_HTTP_AGENT = new https.Agent({
     timeout: 60000
 });
 
-const normalizeBaseUrl = (value) => String(value || '').trim().replace(/\/+$/, '');
-const parseCsvUrls = (value) => (String(value || ''))
-    .split(',')
-    .map(s => normalizeBaseUrl(s))
-    .filter(Boolean);
-const parseCsvValues = (value) => (String(value || ''))
-    .split(',')
-    .map(s => String(s || '').trim())
-    .filter(Boolean);
-
-const configuredOrigins = parseCsvUrls(process.env.TELEGRAM_API_BASES);
-const fallbackOrigins = configuredOrigins.length > 0
-    ? configuredOrigins
-    : [normalizeBaseUrl(process.env.TELEGRAM_API_BASE) || DEFAULT_TELEGRAM_ORIGIN];
-const TELEGRAM_API_ORIGINS = [...new Set(fallbackOrigins)];
-const TELEGRAM_FILE_BASE = normalizeBaseUrl(process.env.TELEGRAM_FILE_BASE);
-let activeTelegramOriginIndex = 0;
-
-const buildTelegramApiUrl = (origin, method) => `${normalizeBaseUrl(origin)}/bot${BOT_TOKEN}/${method}`;
-const buildTelegramFileUrl = (origin, filePath) => {
-    const base = TELEGRAM_FILE_BASE || `${normalizeBaseUrl(origin)}/file`;
-    return `${base}/bot${BOT_TOKEN}/${filePath}`;
-};
-
-const formatHealthError = (value) => String(value || 'unknown error').replace(/\s+/g, ' ').trim();
-const listEnabledIpfsProviders = (status) => {
-    const providers = [];
-    if (status.kuboLocal) providers.push('Kubo Local');
-    if (status.pinata) providers.push('Pinata');
-    if (status.infura) providers.push('Infura (Legacy)');
-    if (status.nftStorage) providers.push('NFT.Storage Classic (Legacy)');
-    return providers;
-};
-let botLockFd = null;
+const telegramApi = createTelegramApiClient({
+    botToken: BOT_TOKEN,
+    apiBases: process.env.TELEGRAM_API_BASES,
+    apiBase: process.env.TELEGRAM_API_BASE,
+    fileBase: process.env.TELEGRAM_FILE_BASE,
+    agent: TELEGRAM_HTTP_AGENT,
+    isRetryable: isRetryableTelegramApiResult
+});
+const botLock = createBotLock(BOT_LOCK_FILE);
+const TELEGRAM_API_ORIGINS = telegramApi.getOrigins();
+const TELEGRAM_FILE_BASE = telegramApi.getFileBase();
 const isPermanentStartupError = (message) => {
     const text = String(message || '').toLowerCase();
     return (
@@ -144,208 +136,20 @@ const isPermanentStartupError = (message) => {
 
 const fatalPollingExit = (reason) => {
     console.error(`❌ Fatal polling error: ${reason}`);
-    releaseBotLock();
+    botLock.release();
     process.exit(FATAL_CONFIG_EXIT_CODE);
-};
-
-const isPidAlive = (pid) => {
-    if (!Number.isInteger(pid) || pid <= 0) return false;
-    try {
-        process.kill(pid, 0);
-        return true;
-    } catch {
-        return false;
-    }
-};
-
-const readLockData = () => {
-    try {
-        const raw = fs.readFileSync(BOT_LOCK_FILE, 'utf8');
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== 'object') return null;
-        return parsed;
-    } catch {
-        return null;
-    }
-};
-
-const acquireBotLock = () => {
-    const payload = JSON.stringify({
-        pid: process.pid,
-        startedAt: new Date().toISOString(),
-        hostname: os.hostname(),
-        cwd: process.cwd()
-    });
-
-    const tryCreate = () => {
-        botLockFd = fs.openSync(BOT_LOCK_FILE, 'wx', 0o600);
-        fs.writeFileSync(botLockFd, payload, 'utf8');
-    };
-
-    try {
-        tryCreate();
-        return;
-    } catch (error) {
-        if (error?.code !== 'EEXIST') {
-            throw new Error(`Cannot create lock file (${BOT_LOCK_FILE}): ${error.message}`);
-        }
-    }
-
-    const existing = readLockData();
-    const existingPid = Number(existing?.pid);
-    if (isPidAlive(existingPid)) {
-        throw new Error(`Another bot instance is already running (PID ${existingPid}). Stop it first to avoid getUpdates conflict.`);
-    }
-
-    try { fs.unlinkSync(BOT_LOCK_FILE); } catch { }
-    tryCreate();
-};
-
-const releaseBotLock = () => {
-    if (botLockFd !== null) {
-        try { fs.closeSync(botLockFd); } catch { }
-        botLockFd = null;
-    }
-    try { fs.unlinkSync(BOT_LOCK_FILE); } catch { }
 };
 
 // ═══════════════════════════════════════════
 // TELEGRAM API - Robust Implementation
 // ═══════════════════════════════════════════
 
-const apiCall = async (method, data = {}, retries = 3) => {
-    const totalAttempts = Math.max(1, retries, TELEGRAM_API_ORIGINS.length);
-    for (let attempt = 1; attempt <= totalAttempts; attempt++) {
-        const originIndex = (activeTelegramOriginIndex + attempt - 1) % TELEGRAM_API_ORIGINS.length;
-        const apiOrigin = TELEGRAM_API_ORIGINS[originIndex];
-        try {
-            const result = await new Promise((resolve, reject) => {
-                const body = JSON.stringify(data);
-                const req = https.request(buildTelegramApiUrl(apiOrigin, method), {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Content-Length': Buffer.byteLength(body)
-                    },
-                    agent: TELEGRAM_HTTP_AGENT,
-                    timeout: 30000
-                }, (res) => {
-                    let responseData = '';
-                    res.on('data', chunk => responseData += chunk);
-                    res.on('end', () => {
-                        try {
-                            const parsed = JSON.parse(responseData);
-                            resolve({
-                                ...parsed,
-                                _httpStatus: res.statusCode,
-                                _apiOrigin: apiOrigin
-                            });
-                        } catch (e) {
-                            resolve({
-                                ok: false,
-                                error: responseData,
-                                description: responseData,
-                                error_code: res.statusCode,
-                                _httpStatus: res.statusCode,
-                                _apiOrigin: apiOrigin
-                            });
-                        }
-                    });
-                });
-
-                req.on('error', reject);
-                req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
-                req.write(body);
-                req.end();
-            });
-
-            if (result?.ok !== false) {
-                activeTelegramOriginIndex = originIndex;
-                return result;
-            }
-
-            if (isRetryableTelegramApiResult(result) && attempt < totalAttempts) {
-                const retryAfter = Number(result?.parameters?.retry_after || 0);
-                const delayMs = result?.error_code === 429
-                    ? Math.max(1000, retryAfter * 1000)
-                    : 1000 * attempt;
-                await sleep(delayMs);
-                continue;
-            }
-
-            activeTelegramOriginIndex = originIndex;
-            return result;
-        } catch (error) {
-            if (attempt === totalAttempts) throw error;
-            await sleep(1000 * attempt);
-        }
-    }
-    throw new Error(`Telegram API call failed after ${totalAttempts} attempts`);
-};
-
-const apiCallAtOrigin = async (origin, method, data = {}) => {
-    return await new Promise((resolve, reject) => {
-        const body = JSON.stringify(data);
-        const req = https.request(buildTelegramApiUrl(origin, method), {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(body)
-            },
-            agent: TELEGRAM_HTTP_AGENT,
-            timeout: TELEGRAM_HEALTH_TIMEOUT_MS
-        }, (res) => {
-            let responseData = '';
-            res.on('data', chunk => responseData += chunk);
-            res.on('end', () => {
-                try {
-                    const parsed = JSON.parse(responseData);
-                    resolve({
-                        ...parsed,
-                        _httpStatus: res.statusCode,
-                        _apiOrigin: origin
-                    });
-                } catch (e) {
-                    resolve({
-                        ok: false,
-                        error: responseData,
-                        description: responseData,
-                        error_code: res.statusCode,
-                        _httpStatus: res.statusCode,
-                        _apiOrigin: origin
-                    });
-                }
-            });
-        });
-
-        req.on('error', reject);
-        req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
-        req.write(body);
-        req.end();
-    });
-};
+const apiCall = (method, data = {}, retries = 3) => telegramApi.apiCall(method, data, retries);
+const apiCallAtOrigin = (origin, method, data = {}) => (
+    telegramApi.apiCallAtOrigin(origin, method, data, TELEGRAM_HEALTH_TIMEOUT_MS)
+);
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-const stripMarkdown = (text) => String(text || '').replace(/[*_`\[\]]/g, '');
-const truncateForTelegram = (text) => {
-    const value = String(text || '');
-    if (value.length <= MAX_TELEGRAM_TEXT_LENGTH) return value;
-    const overflow = value.length - MAX_TELEGRAM_TEXT_LENGTH;
-    return `${value.slice(0, MAX_TELEGRAM_TEXT_LENGTH - 40)}\n\n[truncated ${overflow} chars]`;
-};
-
-const isMarkdownParseError = (result) => {
-    if (!result || result.ok !== false) return false;
-    const desc = String(result.description || result.error || '').toLowerCase();
-    return desc.includes(MARKDOWN_ERROR_TEXT);
-};
-
-const isMessageNotModified = (result) => {
-    if (!result || result.ok !== false) return false;
-    const desc = String(result.description || result.error || '').toLowerCase();
-    return desc.includes(MESSAGE_NOT_MODIFIED_TEXT);
-};
 
 const normalizePrivateKey = () => {
     const raw = String(process.env.PRIVATE_KEY || '').trim();
@@ -355,70 +159,13 @@ const normalizePrivateKey = () => {
 
 const isEthereumAddress = (value) => ETH_ADDRESS_REGEX.test(String(value || '').trim());
 
-const getStatusRpcCandidates = () => {
-    const configuredPrimary = String(process.env.RPC_URL || '').trim();
-    const candidates = [
-        configuredPrimary || DEFAULT_RPC_URL,
-        ...parseCsvValues(process.env.RPC_FALLBACK_URLS)
-    ].filter(Boolean);
-    return [...new Set(candidates)];
-};
-
-const probeTelegramOrigin = async (origin) => {
-    const startedAt = Date.now();
-    try {
-        const result = await apiCallAtOrigin(origin, 'getMe');
-        const latencyMs = Date.now() - startedAt;
-        if (result?.ok) {
-            return { origin, ok: true, latencyMs, username: result?.result?.username || null };
-        }
-        return {
-            origin,
-            ok: false,
-            latencyMs,
-            error: formatHealthError(result?.description || result?.error || `HTTP ${result?._httpStatus || 'unknown'}`)
-        };
-    } catch (error) {
-        return {
-            origin,
-            ok: false,
-            latencyMs: Date.now() - startedAt,
-            error: formatHealthError(error?.message)
-        };
-    }
-};
-
-const probeRpcEndpoint = async (rpcUrl, viemFactory) => {
-    const startedAt = Date.now();
-    try {
-        const client = viemFactory.createPublicClient({
-            chain: viemFactory.base,
-            transport: viemFactory.http(rpcUrl, {
-                timeout: RPC_HEALTH_TIMEOUT_MS,
-                retryCount: 0
-            })
-        });
-        const blockNumber = await client.getBlockNumber();
-        return {
-            rpcUrl,
-            ok: true,
-            latencyMs: Date.now() - startedAt,
-            blockNumber: blockNumber.toString()
-        };
-    } catch (error) {
-        return {
-            rpcUrl,
-            ok: false,
-            latencyMs: Date.now() - startedAt,
-            error: formatHealthError(error?.message)
-        };
-    }
-};
-
 const createHealthyStatusClient = async () => {
     const { createPublicClient, http } = await import('viem');
     const { base } = await import('viem/chains');
-    const rpcCandidates = getStatusRpcCandidates();
+    const rpcCandidates = getStatusRpcCandidates({
+        primaryRpcUrl: process.env.RPC_URL,
+        fallbackRpcUrlsCsv: process.env.RPC_FALLBACK_URLS
+    });
     let lastError = null;
 
     for (const rpcUrl of rpcCandidates) {
@@ -442,206 +189,31 @@ const createHealthyStatusClient = async () => {
     throw new Error(`No healthy RPC endpoint available (${rpcCandidates.join(', ')})${detail}`);
 };
 
-const sendMessage = async (chatId, text, options = {}) => {
-    const safeText = truncateForTelegram(text);
-    const markdownPayload = {
-        chat_id: chatId,
-        text: safeText,
-        parse_mode: 'Markdown',
-        disable_web_page_preview: true,
-        ...options
-    };
-
-    try {
-        const result = await apiCall('sendMessage', markdownPayload);
-        if (result?.ok !== false) {
-            return result;
-        }
-        if (!isMarkdownParseError(result)) {
-            console.warn(`Telegram sendMessage failed: ${result?.description || 'unknown error'}`);
-            return result;
-        }
-    } catch (e) {
-        console.warn(`Telegram sendMessage request error: ${e.message}`);
-    }
-
-    const plainPayload = {
-        chat_id: chatId,
-        text: stripMarkdown(safeText),
-        disable_web_page_preview: true,
-        ...options
-    };
-    delete plainPayload.parse_mode;
-
-    try {
-        return await apiCall('sendMessage', plainPayload);
-    } catch (e) {
-        console.error(`Telegram sendMessage fallback failed: ${e.message}`);
-        return { ok: false, error: e.message, description: e.message };
-    }
-};
-
-const sendTyping = (chatId) => apiCall('sendChatAction', { chat_id: chatId, action: 'typing' }).catch(() => { });
-
-const getFile = async (fileId) => {
-    try {
-        const result = await apiCall('getFile', { file_id: fileId });
-        if (result.ok && result.result.file_path) {
-            return buildTelegramFileUrl(result._apiOrigin || TELEGRAM_API_ORIGINS[activeTelegramOriginIndex], result.result.file_path);
-        }
-    } catch (e) { }
-    return null;
-};
-
-const editMessage = async (chatId, messageId, text) => {
-    const safeText = truncateForTelegram(text);
-    if (!messageId) {
-        return await sendMessage(chatId, safeText);
-    }
-
-    try {
-        const result = await apiCall('editMessageText', {
-            chat_id: chatId,
-            message_id: messageId,
-            text: safeText,
-            parse_mode: 'Markdown'
-        });
-        if (result?.ok !== false) {
-            return result;
-        }
-        if (isMessageNotModified(result)) {
-            return { ...result, ok: true };
-        }
-        if (!isMarkdownParseError(result)) {
-            console.warn(`Telegram editMessageText failed: ${result?.description || 'unknown error'}`);
-        }
-    } catch (e) {
-        console.warn(`Telegram editMessageText request error: ${e.message}`);
-    }
-
-    try {
-        const plainEdit = await apiCall('editMessageText', {
-            chat_id: chatId,
-            message_id: messageId,
-            text: stripMarkdown(safeText)
-        });
-
-        if (plainEdit?.ok === false) {
-            if (isMessageNotModified(plainEdit)) {
-                return { ...plainEdit, ok: true };
-            }
-            return await sendMessage(chatId, safeText);
-        }
-
-        return plainEdit;
-    } catch (e) {
-        console.warn(`Telegram plain editMessageText failed: ${e.message}`);
-        return await sendMessage(chatId, safeText);
-    }
-};
-
-const sendButtons = async (chatId, text, buttons) => {
-    const keyboard = {
-        inline_keyboard: buttons.map(row =>
-            row.map(btn => ({ text: btn.text, callback_data: btn.data }))
-        )
-    };
-
-    const markdownPayload = {
-        chat_id: chatId,
-        text: truncateForTelegram(text),
-        parse_mode: 'Markdown',
-        disable_web_page_preview: true,
-        reply_markup: keyboard
-    };
-
-    try {
-        const result = await apiCall('sendMessage', markdownPayload);
-        if (result?.ok !== false) {
-            return result;
-        }
-        if (!isMarkdownParseError(result)) {
-            console.warn(`Telegram sendButtons failed: ${result?.description || 'unknown error'}`);
-            return result;
-        }
-    } catch (e) {
-        console.warn(`Telegram sendButtons request error: ${e.message}`);
-    }
-
-    return await apiCall('sendMessage', {
-        chat_id: chatId,
-        text: truncateForTelegram(stripMarkdown(text)),
-        disable_web_page_preview: true,
-        reply_markup: keyboard
-    });
-};
+const messenger = createTelegramMessenger({
+    apiCall,
+    buildFileUrl: (origin, filePath) => telegramApi.buildFileUrl(origin, filePath),
+    getActiveOrigin: () => telegramApi.getActiveOrigin(),
+    logger: console
+});
+const { sendMessage, sendTyping, getFile, editMessage, sendButtons } = messenger;
 
 // ═══════════════════════════════════════════
 // SESSION MANAGEMENT - With Auto-Cleanup
 // ═══════════════════════════════════════════
 
-const cloneTokenDraft = (token) => ({
-    name: token?.name ?? null,
-    symbol: token?.symbol ?? null,
-    image: token?.image ?? null,
-    description: token?.description ?? null,
-    fees: {
-        clankerFee: Number(token?.fees?.clankerFee ?? DEFAULT_FEES.clankerFee),
-        pairedFee: Number(token?.fees?.pairedFee ?? DEFAULT_FEES.pairedFee)
-    },
-    context: token?.context
-        ? {
-            platform: String(token.context.platform || 'website'),
-            messageId: String(token.context.messageId || '')
-        }
-        : null,
-    socials: { ...(token?.socials || {}) },
-    spoofTo: token?.spoofTo ?? null
+const sessionDraftBridge = createSessionDraftBridge({
+    sessionManager,
+    configStore,
+    defaultFees: DEFAULT_FEES,
+    logger: console
 });
-
-const hydrateSessionFromDraft = (session, draft) => {
-    if (!draft || typeof draft !== 'object') return;
-    session.token = cloneTokenDraft(draft);
-    session.state = 'collecting';
-};
-
-const persistSessionDraft = (chatId, session) => {
-    try {
-        configStore.saveDraft(chatId, cloneTokenDraft(session.token));
-    } catch (error) {
-        console.error('Draft save warning:', error.message);
-    }
-};
-
-const clearSessionDraft = (chatId) => {
-    try {
-        configStore.clearDraft(chatId);
-    } catch (error) {
-        console.error('Draft clear warning:', error.message);
-    }
-};
-
-const getSession = (chatId) => {
-    const session = sessionManager.get(chatId);
-    if (!session._draftHydrated) {
-        const draft = configStore.getDraft(chatId);
-        if (draft) {
-            hydrateSessionFromDraft(session, draft);
-        }
-        session._draftHydrated = true;
-    }
-    return session;
-};
-
-const resetSession = (chatId, options = {}) => {
-    const clearDraft = options.clearDraft !== false;
-    const session = sessionManager.reset(chatId);
-    session._draftHydrated = true;
-    if (clearDraft) {
-        clearSessionDraft(chatId);
-    }
-    return session;
-};
+const {
+    cloneTokenDraft,
+    hydrateSessionFromDraft,
+    persistSessionDraft,
+    getSession,
+    resetSession
+} = sessionDraftBridge;
 
 const isAuthorized = (chatId, userId) => {
     if (ADMIN_CHAT_IDS.length === 0) return true;
@@ -663,53 +235,6 @@ const validatePrivateKey = () => {
     return { valid: true };
 };
 
-const getReadyStatus = (token) => {
-    const missing = [];
-    return {
-        ready: missing.length === 0,
-        missing,
-        hasContext: !!token.context?.messageId,
-        hasImage: !!token.image
-    };
-};
-
-const UI_ACTIONS = {
-    MENU: 'm_menu',
-    WIZARD: 'm_wizard',
-    SETTINGS: 'm_settings',
-    FALLBACK: 'm_fallback',
-    SET_NAME: 'm_name',
-    SET_SYMBOL: 'm_symbol',
-    SET_FEES: 'm_fees',
-    FEE_PRESET_6: 'm_fee_6',
-    FEE_PRESET_5: 'm_fee_5',
-    SET_CONTEXT: 'm_context',
-    SET_IMAGE: 'm_image',
-    SET_SPOOF: 'm_spoof',
-    PROFILES: 'm_profiles',
-    PROFILE_SAVE: 'pf_save',
-    PROFILE_LOAD: 'pf_load',
-    PROFILE_DELETE: 'pf_delete',
-    STATUS: 'm_status',
-    HEALTH: 'm_health',
-    DEPLOY: 'm_deploy',
-    CANCEL: 'm_cancel',
-    HELP: 'm_help',
-    WIZ_FEE_6: 'w_fee_6',
-    WIZ_FEE_5: 'w_fee_5',
-    WIZ_SKIP_IMAGE: 'w_skip_img',
-    WIZ_SKIP_CONTEXT: 'w_skip_ctx',
-    FB_AUTOFILL: 'fb_autofill',
-    FB_CLEAR_IMAGE: 'fb_clear_img',
-    FB_CLEAR_CONTEXT: 'fb_clear_ctx',
-    FB_CLEAR_SOCIALS: 'fb_clear_socials'
-};
-
-const IMAGE_INPUT_STATES = new Set(['menu_image', 'wizard_image']);
-const PROFILE_INPUT_STATES = new Set(['menu_profile_save', 'menu_profile_load', 'menu_profile_delete']);
-
-const canAcceptImageInput = (session) => IMAGE_INPUT_STATES.has(String(session?.state || ''));
-
 const deleteTelegramMessage = async (chatId, messageId) => {
     if (!chatId || !messageId) return;
     try {
@@ -729,39 +254,6 @@ const handleUnexpectedImageInput = async (chatId, messageId, session) => {
         await showControlPanel(chatId, session, '*Session Panel*');
     }
 };
-
-const getPanelButtons = (token, ready) => {
-    const deployLabel = ready ? 'Deploy' : 'Validate';
-
-    return [
-        [{ text: deployLabel, data: UI_ACTIONS.DEPLOY }, { text: 'Wizard', data: UI_ACTIONS.WIZARD }],
-        [{ text: 'Settings', data: UI_ACTIONS.SETTINGS }, { text: 'Status', data: UI_ACTIONS.STATUS }],
-        [{ text: 'Health', data: UI_ACTIONS.HEALTH }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
-    ];
-};
-
-const getSettingsButtons = (token) => {
-    const spoofLabel = token?.spoofTo ? 'Spoof: On' : 'Spoof: Off';
-    return [
-        [{ text: 'Name', data: UI_ACTIONS.SET_NAME }, { text: 'Symbol', data: UI_ACTIONS.SET_SYMBOL }],
-        [{ text: 'Fees', data: UI_ACTIONS.SET_FEES }, { text: 'Context', data: UI_ACTIONS.SET_CONTEXT }],
-        [{ text: 'Image', data: UI_ACTIONS.SET_IMAGE }, { text: spoofLabel, data: UI_ACTIONS.SET_SPOOF }],
-        [{ text: 'Profiles', data: UI_ACTIONS.PROFILES }, { text: 'Fallback', data: UI_ACTIONS.FALLBACK }],
-        [{ text: 'Main Panel', data: UI_ACTIONS.MENU }]
-    ];
-};
-
-const getFallbackButtons = () => [
-    [{ text: 'Auto-fill Missing', data: UI_ACTIONS.FB_AUTOFILL }, { text: 'Clear Image', data: UI_ACTIONS.FB_CLEAR_IMAGE }],
-    [{ text: 'Clear Context', data: UI_ACTIONS.FB_CLEAR_CONTEXT }, { text: 'Clear Socials', data: UI_ACTIONS.FB_CLEAR_SOCIALS }],
-    [{ text: 'Reset Session', data: UI_ACTIONS.CANCEL }, { text: 'Settings', data: UI_ACTIONS.SETTINGS }]
-];
-
-const getProfileButtons = () => [
-    [{ text: 'Save Preset', data: UI_ACTIONS.PROFILE_SAVE }, { text: 'Load Preset', data: UI_ACTIONS.PROFILE_LOAD }],
-    [{ text: 'Delete Preset', data: UI_ACTIONS.PROFILE_DELETE }, { text: 'Settings', data: UI_ACTIONS.SETTINGS }],
-    [{ text: 'Main Panel', data: UI_ACTIONS.MENU }]
-];
 
 const sendWizardImagePrompt = async (chatId) => {
     return await sendButtons(chatId, `
@@ -800,43 +292,6 @@ const applySessionFallbacks = (session) => {
             pairedFee: Number(validated.fees.pairedFee)
         };
     }
-};
-
-const renderFieldValue = (value, notSet = '_not set_') => {
-    if (value === undefined || value === null) return notSet;
-    const raw = String(value);
-    if (raw.length === 0) return '`(empty)`';
-    if (!raw.trim()) return '`(spaces)`';
-    return raw;
-};
-
-const formatSessionPanel = (session, title = '*Session Panel*') => {
-    const t = session.token;
-    const status = getReadyStatus(t);
-    const totalFee = Number(t?.fees?.clankerFee || 0) + Number(t?.fees?.pairedFee || 0);
-    const imageStatus = t.image ? 'Set' : 'Not set';
-    const contextStatus = t.context?.messageId
-        ? `${String(t.context.platform || 'unknown').toUpperCase()}`
-        : 'Not set';
-    const socialCount = Object.keys(t.socials || {}).length;
-    const spoofStatus = t.spoofTo ? `ON (${t.spoofTo.slice(0, 8)}...)` : 'OFF';
-
-    return {
-        text: `
-${title}
-━━━━━━━━━━━━━━━━━━━━━
-*Name:* ${renderFieldValue(t.name)}
-*Symbol:* ${renderFieldValue(t.symbol)}
-*Fees:* ${(totalFee / 100).toFixed(2)}% (${t?.fees?.clankerFee || 0}/${t?.fees?.pairedFee || 0} bps)
-*Context:* ${contextStatus}
-*Image:* ${imageStatus}
-*Socials:* ${socialCount}
-*Spoof:* ${spoofStatus}
-
-${status.ready ? 'Ready to deploy' : 'Configure fields using buttons below'}
-`.trim(),
-        buttons: getPanelButtons(t, status.ready)
-    };
 };
 
 const showControlPanel = async (chatId, session, title) => {
@@ -1001,7 +456,10 @@ const handleHealth = async (chatId) => {
     try {
         const pkCheck = validatePrivateKey();
         const ipfsStatus = getProviderStatus();
-        const rpcCandidates = getStatusRpcCandidates();
+        const rpcCandidates = getStatusRpcCandidates({
+            primaryRpcUrl: process.env.RPC_URL,
+            fallbackRpcUrlsCsv: process.env.RPC_FALLBACK_URLS
+        });
 
         const [{ createPublicClient, http }, { base }] = await Promise.all([
             import('viem'),
@@ -1011,11 +469,11 @@ const handleHealth = async (chatId) => {
         const viemFactory = { createPublicClient, http, base };
 
         const [telegramChecks, rpcChecks] = await Promise.all([
-            Promise.all(TELEGRAM_API_ORIGINS.map(origin => probeTelegramOrigin(origin))),
+            Promise.all(TELEGRAM_API_ORIGINS.map(origin => probeTelegramOrigin(origin, apiCallAtOrigin))),
             Promise.all(rpcCandidates.map(rpcUrl => probeRpcEndpoint(rpcUrl, viemFactory)))
         ]);
 
-        const activeTelegramOrigin = TELEGRAM_API_ORIGINS[activeTelegramOriginIndex] || TELEGRAM_API_ORIGINS[0];
+        const activeTelegramOrigin = telegramApi.getActiveOrigin();
         const healthyRpc = rpcChecks.find(item => item.ok);
         const ipfsProviders = listEnabledIpfsProviders(ipfsStatus);
         const storeStats = configStore.getStats();
@@ -1165,8 +623,6 @@ const handleGo = async (chatId, args) => {
         session.token.fees = { ...DEFAULT_FEES };
     }
 
-    const status = getReadyStatus(session.token);
-
     if (!session.token.symbol && !session.token.name && String(args || '').trim()) {
         session.token.name = String(args || '');
     }
@@ -1176,10 +632,15 @@ const handleGo = async (chatId, args) => {
         session.token.name = session.token.symbol;
     }
 
+    const status = getReadyStatus(session.token);
+
     session.state = 'collecting';
     persistSessionDraft(chatId, session);
 
-    const totalFee = (session.token.fees.clankerFee + session.token.fees.pairedFee) / 100;
+    const totalFee = (
+        Number(session.token?.fees?.clankerFee || 0)
+        + Number(session.token?.fees?.pairedFee || 0)
+    ) / 100;
     const displayName = renderFieldValue(session.token.name);
     const displaySymbol = renderFieldValue(session.token.symbol);
 
@@ -1798,10 +1259,18 @@ Type *"/cancel"* to abort.
             [{ text: 'Settings', data: UI_ACTIONS.SETTINGS }, { text: 'Main Panel', data: UI_ACTIONS.MENU }]
         ]);
     } else if (status.missing.length > 0) {
+        const requiredPrompts = [];
+        if (status.missing.includes('name')) requiredPrompts.push('set token *name*');
+        if (status.missing.includes('symbol')) requiredPrompts.push('set token *symbol*');
+        if (status.missing.includes('fees')) requiredPrompts.push('set valid *fees*');
+
         const prompts = [];
         if (!status.hasImage) prompts.push('(Optional) set token *image*');
         if (!status.hasContext) prompts.push('(Recommended) set *source link* context');
 
+        if (requiredPrompts.length > 0) {
+            await sendMessage(chatId, `*Required:* ${requiredPrompts.join(' and ')}`);
+        }
         if (prompts.length > 0) {
             await sendMessage(chatId, `*Next:* ${prompts.join(' or ')}`);
         }
@@ -2107,14 +1576,14 @@ const main = async () => {
         process.exit(FATAL_CONFIG_EXIT_CODE);
     }
 
-    acquireBotLock();
+    botLock.acquire();
     console.log(`🔒 Instance lock: ${BOT_LOCK_FILE}`);
 
     // Verify bot
     const me = await apiCall('getMe');
     if (!me.ok) {
         console.error(`❌ Invalid bot token (${me.description || 'unknown error'})`);
-        releaseBotLock();
+        botLock.release();
         process.exit(FATAL_CONFIG_EXIT_CODE);
     }
 
@@ -2171,7 +1640,7 @@ const shutdown = (signal) => {
     } catch (e) {
         // Ignore shutdown cleanup errors
     }
-    releaseBotLock();
+    botLock.release();
     process.exit(0);
 };
 
@@ -2181,7 +1650,7 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 // Start Main
 main().catch(err => {
     console.error('❌ Fatal Startup Error:', err);
-    releaseBotLock();
+    botLock.release();
     const code = isPermanentStartupError(err?.message) ? FATAL_CONFIG_EXIT_CODE : 1;
     process.exit(code);
 });

@@ -266,9 +266,19 @@ ensure_home_shortcuts() {
 
 check_kubo_api() {
     local base="$1"
+    local endpoint
     base="${base%/}"
     [ -n "$base" ] || return 1
-    curl -fsS --max-time 8 "$base/api/v0/version" >/dev/null 2>&1
+
+    # Kubo RPC API endpoints are POST-based; GET can return 405 even when healthy.
+    if [[ "$base" == */api/v0 ]]; then
+        endpoint="$base/version"
+    else
+        endpoint="$base/api/v0/version"
+    fi
+    local code
+    code="$(curl -sS --max-time 8 -o /dev/null -w '%{http_code}' -X POST --data '' "$endpoint" 2>/dev/null || true)"
+    [[ "$code" =~ ^2[0-9][0-9]$ ]]
 }
 
 kubo_service_name() {

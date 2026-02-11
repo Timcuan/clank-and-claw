@@ -26,6 +26,18 @@ check_endpoint() {
     fi
 }
 
+check_kubo_api_endpoint() {
+    local base="${1%/}"
+    local label="$2"
+    local code
+    code="$(curl -sS --max-time 8 -o /dev/null -w '%{http_code}' -X POST --data '' "$base/api/v0/version" 2>/dev/null || true)"
+    if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
+        echo "✅ ${label} reachable"
+    else
+        echo "⚠️  ${label} unreachable (check kubo service/api bind)"
+    fi
+}
+
 # ─────────────────────────────────────────
 # 1. System Updates
 # ─────────────────────────────────────────
@@ -223,7 +235,7 @@ check "DNS resolve mainnet.base.org" "getent hosts mainnet.base.org"
 check "Telegram API health" "curl -fsS --max-time 8 https://api.telegram.org"
 check "Base RPC health" "curl -fsS --max-time 8 -H 'content-type: application/json' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]}' https://mainnet.base.org"
 check "Gateway pinata" "curl -fsS --max-time 8 https://gateway.pinata.cloud/ipfs"
-check "Local Kubo API (optional)" "curl -fsS --max-time 5 http://127.0.0.1:5001/api/v0/version"
+check "Local Kubo API (optional)" "curl -fsS --max-time 5 -X POST --data '' http://127.0.0.1:5001/api/v0/version"
 
 echo ""
 echo "Tips:"
@@ -368,7 +380,7 @@ echo "🌐 Running quick network preflight..."
 check_endpoint "https://api.telegram.org" "Telegram API"
 check_endpoint "https://mainnet.base.org" "Base RPC"
 check_endpoint "https://gateway.pinata.cloud/ipfs" "IPFS Gateway"
-check_endpoint "http://127.0.0.1:5001/api/v0/version" "Local Kubo API (optional)"
+check_kubo_api_endpoint "http://127.0.0.1:5001" "Local Kubo API (optional)"
 
 # ─────────────────────────────────────────
 # Done!

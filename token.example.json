@@ -6,14 +6,31 @@
     "symbol": "TOKEN",
     "image": "bafkreiabcd1234 or https://example.com/image.png",
     "___SECTION_2_FEES___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "fees": "6%",
-    "__fees_help": "Examples: '6%', '3% 3%', '600bps', '300 300'",
+    "fees": {
+        "mode": "static",
+        "__mode_help": "Choose: static or dynamic",
+        "static": {
+            "clankerFeeBps": 300,
+            "pairedFeeBps": 300,
+            "__help": "Static fee in bps (100 bps = 1%). Custom values allowed."
+        },
+        "dynamic": {
+            "baseFeePercent": 1,
+            "maxFeePercent": 10,
+            "adjustmentPeriod": 3600,
+            "resetPeriod": 86400,
+            "resetTickFilter": 100,
+            "feeControlNumerator": 100000,
+            "decayFilterBps": 9500,
+            "__help": "Traffic-based fee model. Default dynamic range is 1% to 10%."
+        }
+    },
     "___SECTION_3_CONTEXT___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     "context": {
         "platform": "twitter",
         "url": "https://x.com/user/status/123456789"
     },
-    "__context_help": "Required for Clankerworld indexing. Use twitter or farcaster",
+    "__context_help": "Context can use any source link. Platform and messageId are auto-detected from URL.",
     "___SECTION_4_DESCRIPTION___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     "description": "My amazing token - deployed with Clank & Claw",
     "___SECTION_5_SOCIALS___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
@@ -39,6 +56,8 @@
         "__devBuy_help": "Auto-buy amount in ETH (e.g., 0.01). Set to 0 to skip",
         "vanity": true,
         "__vanity_help": "Use vanity address if available",
+        "smartValidation": false,
+        "__smartValidation_help": "false = no auto-correct for token.json edits (strict validation)",
         "strictMode": false,
         "__strictMode_help": "Enforce Clankerworld Blue Badge rules (use 'farcaster', max 5% fees, etc.)"
     },
@@ -52,16 +71,7 @@
         "decaySeconds": 15,
         "__decaySeconds_help": "Time for fees to decay to normal (default: 15s)"
     },
-    "___SECTION_9_DYNAMIC_FEES___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
-    "dynamicFees": {
-        "enabled": false,
-        "__help": "Dynamic fees adjust based on trading activity",
-        "baseFee": 0.5,
-        "maxFee": 5,
-        "adjustmentPeriod": 3600,
-        "resetPeriod": 86400
-    },
-    "___SECTION_10_POOL_CONFIG___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    "___SECTION_9_POOL_CONFIG___": "━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
     "pool": {
         "pairedToken": "WETH",
         "__pairedToken_help": "Token to pair with (default: WETH)",

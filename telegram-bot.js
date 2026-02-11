@@ -481,7 +481,7 @@ const handleStart = async (chatId, username) => {
 • */spoof* <ADDRESS> - Toggle Stealth Mode
 
 💡 *Pro Tip:*
-You can just paste a "tweet link" to set context, or drag & drop an image anytime.
+You can paste any source link to set context (X/Farcaster/GitHub/Website/etc), or drag & drop an image anytime.
 
 _Ready for instructions._
     `.trim());
@@ -500,7 +500,7 @@ Example: \`/go DOGE "Moon Doge" 6%\`
 1. \`/deploy\` → Start wizard
 2. Enter name → Enter symbol → Set fees
 3. Send image (auto IPFS upload)
-4. Send tweet link → Confirm → Done!
+4. Send source link → Confirm → Done!
 
 *💬 Natural Language:*
 Just type: _"Launch PEPE (Pepe Token) 6%"_
@@ -520,9 +520,10 @@ Rewards go to stealth wallet (or reset ke default).
 Send any image → Auto IPFS upload
 Or paste IPFS CID: \`bafkrei...\`
 
-*🔗 Context Links:*
+*🔗 Context Links (Any Source):*
 \`https://x.com/user/status/123\`
 \`https://warpcast.com/user/0xabc\`
+\`https://github.com/org/repo\`
 
 *⚙️ Commands:*
 \`/go\` - Fast deploy
@@ -759,7 +760,7 @@ ${session.token.spoofTo ? `🎭 Spoof: Active` : ''}
 
 *Next Steps:*
 ${!session.token.image ? '1️⃣ (Opsional) Send token *image*' : ''}
-${!session.token.context ? '2️⃣ (Disarankan) Send *tweet/cast link*' : ''}
+${!session.token.context ? '2️⃣ (Disarankan) Send *source link* (X/Farcaster/GitHub/Website/etc)' : ''}
 ${status.ready ? '\n✅ Ready! Type \`yes\` to deploy' : ''}
     `.trim());
 
@@ -828,7 +829,7 @@ const processMessage = async (chatId, text, session) => {
         }
 
         if (!context && Object.keys(socials).length > 0 && !session.token.context) {
-            await sendMessage(chatId, `⚠️ Saved socials, but still need a *Context Link* (Tweet/Cast)!`);
+            await sendMessage(chatId, `⚠️ Saved socials, but still need a *Context Link* (any source URL).`);
         }
 
         return await checkAndPrompt(chatId, session);
@@ -885,7 +886,7 @@ _Examples: 6%, 600bps, 3% 3%_
     *Step 4/4: Image & Context (Recommended)*
     Now send:
 1️⃣ Token *image* (will upload to IPFS)
-2️⃣ *Tweet/cast link* for indexing quality
+2️⃣ *Source link* for indexing quality (X/Farcaster/GitHub/Website/etc)
             `.trim());
 
         case 'collecting':
@@ -1013,7 +1014,7 @@ ${t.spoofTo ? `• *Spoofing:* ACTIVE 🎭\n  Target: \`${t.spoofTo}\`` : '• *
         const prompts = [];
         if (status.missing.includes('name_or_symbol')) prompts.push('📝 Need token *name* or *symbol*');
         if (!status.hasImage) prompts.push('📷 (Opsional) Send token *image*');
-        if (!status.hasContext) prompts.push('🔗 (Disarankan) Send *tweet/cast* (can include website/telegram links too)');
+        if (!status.hasContext) prompts.push('🔗 (Disarankan) Send *source link* (X/Farcaster/GitHub/Website/etc)');
 
         if (prompts.length > 0) {
             await sendMessage(chatId, `*Next:* ${prompts.join(' or ')}`);

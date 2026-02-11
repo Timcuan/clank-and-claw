@@ -36,6 +36,14 @@
                         ],
                         "default": "static"
                     },
+                    "mode": {
+                        "type": "string",
+                        "enum": [
+                            "static",
+                            "dynamic"
+                        ],
+                        "description": "Alias for type"
+                    },
                     "clankerFee": {
                         "type": "integer",
                         "description": "Token side fee in bps",
@@ -45,25 +53,67 @@
                         "type": "integer",
                         "description": "WETH side fee in bps",
                         "default": 300
+                    },
+                    "baseFee": {
+                        "type": "integer",
+                        "description": "Dynamic base fee in bps (default 100 = 1%)"
+                    },
+                    "maxFee": {
+                        "type": "integer",
+                        "description": "Dynamic max fee in bps (default 1000 = 10%)"
+                    },
+                    "adjustmentPeriod": {
+                        "type": "integer",
+                        "description": "Dynamic reference tick filter period in seconds (default 3600)"
+                    },
+                    "resetPeriod": {
+                        "type": "integer",
+                        "description": "Dynamic reset period in seconds (default 86400)"
+                    },
+                    "resetTickFilter": {
+                        "type": "integer",
+                        "description": "Dynamic reset tick filter (default 100)"
+                    },
+                    "feeControlNumerator": {
+                        "type": "integer",
+                        "description": "Dynamic fee control numerator (default 100000)"
+                    },
+                    "decayFilterBps": {
+                        "type": "integer",
+                        "description": "Dynamic decay filter in bps (default 9500)"
                     }
                 }
             },
             "context": {
                 "type": "object",
-                "description": "Social context for indexing (IMPORTANT: must be specific post URL)",
+                "description": "Source context link for indexing. Platform can be auto-detected from URL.",
                 "properties": {
                     "platform": {
                         "type": "string",
                         "enum": [
                             "twitter",
                             "farcaster",
-                            "clanker"
+                            "clanker",
+                            "website",
+                            "telegram",
+                            "discord",
+                            "github",
+                            "medium",
+                            "reddit",
+                            "instagram",
+                            "youtube",
+                            "tiktok",
+                            "linkedin"
                         ],
                         "default": "twitter"
                     },
                     "messageId": {
                         "type": "string",
-                        "description": "Specific post URL (e.g., https://x.com/user/status/123)"
+                        "description": "Optional explicit context ID. Usually auto-fetched from context URL."
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": "Source URL for context. Platform and messageId can be auto-detected."
                     }
                 }
             },

@@ -7,7 +7,19 @@
   "name": "My Token",
   "symbol": "TOKEN",
   "image": "bafkreiabcd1234",
-  "fees": "6%",
+  "fees": {
+    "mode": "static",
+    "static": {
+      "clankerFeeBps": 300,
+      "pairedFeeBps": 300
+    },
+    "dynamic": {
+      "baseFeePercent": 1,
+      "maxFeePercent": 10,
+      "adjustmentPeriod": 3600,
+      "resetPeriod": 86400
+    }
+  },
   "context": {
     "platform": "twitter",
     "url": "https://x.com/user/status/123456789"
@@ -42,7 +54,50 @@ If you get stuck or the bot doesn't understand, it will:
  - ✅ Context linked to Tweet
  - ✅ Website added to socials
 
-## All Fee Formats
+## Fee Modes (token.json)
+
+Use one explicit `fees.mode` in `token.json`:
+
+### Static mode (custom bps)
+
+```json
+{
+  "fees": {
+    "mode": "static",
+    "static": {
+      "clankerFeeBps": 300,
+      "pairedFeeBps": 300
+    }
+  }
+}
+```
+
+### Dynamic mode (traffic-based, default 1%-10%)
+
+```json
+{
+  "fees": {
+    "mode": "dynamic",
+    "dynamic": {
+      "baseFeePercent": 1,
+      "maxFeePercent": 10,
+      "adjustmentPeriod": 3600,
+      "resetPeriod": 86400
+    }
+  }
+}
+```
+
+### 📢 Default Standards (v2.6.2+)
+If no fees are provided, the system defaults to:
+- **Static Fees:** 6% Total (3% Clanker + 3% Paired)
+- **Dynamic Fees:** 1% Base - 10% Max
+
+For `token.json` flow:
+- Static fees are fully custom (no hard cap enforced by validator).
+- Dynamic fees are configurable via `fees.dynamic` parameters.
+
+## Legacy Fee Inputs (Still Supported)
 
 | Format | Example | Result |
 |--------|---------|--------|
@@ -52,17 +107,18 @@ If you get stuck or the bot doesn't understand, it will:
 | BPS Split | `"300 300"` | 3% + 3% |
 | Natural | `"with 6 percent fees"` | 3% + 3% |
 
-### 📢 Default Standards (v2.6.2+)
-If no fees are provided, the system defaults to:
-- **Static Fees:** 6% Total (3% Clanker + 3% Paired)
-- **Dynamic Fees:** 1% Base - 10% Max
-
 ## Context Platforms
 
-| Platform | URL Format |
-|----------|------------|
-| Twitter | `https://x.com/user/status/123456789` |
-| Farcaster | `https://warpcast.com/user/0x123abc` |
+Context platform is now auto-detected from the URL you provide.
+
+Examples:
+- `https://x.com/user/status/123456789` -> `twitter`
+- `https://warpcast.com/user/0x123abc` -> `farcaster`
+- `https://github.com/org/repo` -> `github`
+- `https://t.me/channel` -> `telegram`
+- Any other HTTPS link -> `website`
+
+`context.messageId` is auto-fetched from `context.url`.
 
 ## Spoofing Mode
 
@@ -108,16 +164,21 @@ If no fees are provided, the system defaults to:
 
 **Effect:** Automatically buys 0.01 ETH of your token on deployment.
 
-## Dynamic Fees (Advanced)
+## Dynamic Fee Parameters (Advanced)
 
 ```json
 {
-  "dynamicFees": {
-    "enabled": true,
-    "baseFee": 0.5,
-    "maxFee": 5,
-    "adjustmentPeriod": 3600,
-    "resetPeriod": 86400
+  "fees": {
+    "mode": "dynamic",
+    "dynamic": {
+      "baseFeePercent": 1,
+      "maxFeePercent": 10,
+      "adjustmentPeriod": 3600,
+      "resetPeriod": 86400,
+      "resetTickFilter": 100,
+      "feeControlNumerator": 100000,
+      "decayFilterBps": 9500
+    }
   }
 }
 ```
@@ -149,7 +210,13 @@ If no fees are provided, the system defaults to:
   "name": "Moon Token",
   "symbol": "MOON",
   "image": "bafkreixyz123",
-  "fees": "6%",
+  "fees": {
+    "mode": "static",
+    "static": {
+      "clankerFeeBps": 300,
+      "pairedFeeBps": 300
+    }
+  },
   
   "context": {
     "platform": "twitter",
@@ -184,14 +251,20 @@ Recommended env guardrail:
 - `SMART_VALIDATION=true` to auto-heal missing/invalid fields (recommended for bot/agent workflows).
 - `REQUIRE_CONTEXT=true` + `DEFAULT_CONTEXT_ID=<id>` for consistent indexing fallback.
 
+For `token.json` manual editing flow:
+- `advanced.smartValidation` defaults to `false` (strict, no auto-correct).
+- Set `advanced.smartValidation: true` only if you want auto-heal behavior.
+
 ## Common Mistakes
 
 ❌ **Don't:**
 ```json
 {
-  "fees": "10",  // Missing %
+  "fees": {
+    "mode": "static"
+  },  // Missing static fee parameters
   "context": {
-    "url": "https://x.com/user"  // Not a tweet link
+    "url": "https://example.com"  // Works, but tweet/cast gives best indexing quality
   }
 }
 ```
@@ -199,7 +272,13 @@ Recommended env guardrail:
 ✅ **Do:**
 ```json
 {
-  "fees": "6%",
+  "fees": {
+    "mode": "dynamic",
+    "dynamic": {
+      "baseFeePercent": 1,
+      "maxFeePercent": 10
+    }
+  },
   "context": {
     "url": "https://x.com/user/status/123456789"
   }

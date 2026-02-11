@@ -49,8 +49,8 @@ Smart mode is enabled by default (`SMART_VALIDATION=true`).
 |---|---|---|
 | Name/Symbol | Missing or malformed | Generate safe fallback and normalize |
 | Image | Missing/invalid URL/CID | Apply fallback image (`DEFAULT_IMAGE_URL` or default CID gateway) |
-| Fees | Too high / invalid format | Clamp/reset to protocol-safe fee (max 6%) |
-| Context | Missing message ID | Use `DEFAULT_CONTEXT_ID`, else synthetic context |
+| Fees | Too high / invalid format | Clamp/reset to protocol-safe fee (max 6%) for env/bot; token.json custom mode can bypass cap |
+| Context | Missing message ID/platform | Auto-derive from source URL, else use `DEFAULT_CONTEXT_ID`, else synthetic context |
 | Social URLs | Bare/partial URLs | Normalize to valid `https://...` or drop invalid entries |
 | Rewards | Invalid bps/admin/recipient | Drop broken recipients and rebalance to 10000 bps |
 | Strict mode | Requirements incomplete | Auto-relax to standard mode (deploy continues) |

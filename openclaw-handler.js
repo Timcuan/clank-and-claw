@@ -75,6 +75,9 @@ const applyInputToEnv = (input) => {
     const socials = input.socials || input.SOCIALS || {};
     const context = input.context || input.CONTEXT || {};
     const fees = input.fees || input.FEES || {};
+    const staticFees = (fees.static && typeof fees.static === 'object') ? fees.static : fees;
+    const dynamicFees = (fees.dynamic && typeof fees.dynamic === 'object') ? fees.dynamic : fees;
+    const feeMode = String(fees.type ?? fees.mode ?? '').trim().toLowerCase();
     const sniperFees = input.sniperFees || input.SNIPER_FEES || {};
     const pool = input.pool || input.POOL || {};
     const spoof = input.spoof || input.SPOOF || {};
@@ -120,7 +123,7 @@ const applyInputToEnv = (input) => {
 
     // Context
     setEnvIf('CONTEXT_PLATFORM', pick(input, ['CONTEXT_PLATFORM']) ?? context.platform);
-    setEnvIf('CONTEXT_MESSAGE_ID', pick(input, ['CONTEXT_MESSAGE_ID']) ?? context.messageId);
+    setEnvIf('CONTEXT_MESSAGE_ID', pick(input, ['CONTEXT_MESSAGE_ID']) ?? context.messageId ?? context.url);
 
     // Flags
     const strictMode = normalizeBool(pick(input, ['strictMode', 'STRICT_MODE']));
@@ -141,11 +144,22 @@ const applyInputToEnv = (input) => {
     setEnvIf('PRIVATE_KEY', pick(input, ['privateKey', 'PRIVATE_KEY']));
 
     // Fees
-    if (fees.type) setEnvIf('FEE_TYPE', fees.type);
-    if (fees.clankerFee !== undefined) setEnvIf('FEE_CLANKER_BPS', fees.clankerFee);
-    if (fees.pairedFee !== undefined) setEnvIf('FEE_PAIRED_BPS', fees.pairedFee);
-    if (fees.baseFee !== undefined) setEnvIf('FEE_DYNAMIC_BASE', fees.baseFee);
-    if (fees.maxFee !== undefined) setEnvIf('FEE_DYNAMIC_MAX', fees.maxFee);
+    if (feeMode) setEnvIf('FEE_TYPE', feeMode);
+    if (staticFees.clankerFee !== undefined) setEnvIf('FEE_CLANKER_BPS', staticFees.clankerFee);
+    if (staticFees.clankerFeeBps !== undefined) setEnvIf('FEE_CLANKER_BPS', staticFees.clankerFeeBps);
+    if (staticFees.pairedFee !== undefined) setEnvIf('FEE_PAIRED_BPS', staticFees.pairedFee);
+    if (staticFees.pairedFeeBps !== undefined) setEnvIf('FEE_PAIRED_BPS', staticFees.pairedFeeBps);
+
+    if (dynamicFees.baseFee !== undefined) setEnvIf('FEE_DYNAMIC_BASE', dynamicFees.baseFee);
+    if (dynamicFees.baseFeeBps !== undefined) setEnvIf('FEE_DYNAMIC_BASE', dynamicFees.baseFeeBps);
+    if (dynamicFees.maxFee !== undefined) setEnvIf('FEE_DYNAMIC_MAX', dynamicFees.maxFee);
+    if (dynamicFees.maxFeeBps !== undefined) setEnvIf('FEE_DYNAMIC_MAX', dynamicFees.maxFeeBps);
+    if (dynamicFees.adjustmentPeriod !== undefined) setEnvIf('FEE_DYNAMIC_PERIOD', dynamicFees.adjustmentPeriod);
+    if (dynamicFees.referenceTickFilterPeriod !== undefined) setEnvIf('FEE_DYNAMIC_PERIOD', dynamicFees.referenceTickFilterPeriod);
+    if (dynamicFees.resetPeriod !== undefined) setEnvIf('FEE_DYNAMIC_RESET', dynamicFees.resetPeriod);
+    if (dynamicFees.resetTickFilter !== undefined) setEnvIf('FEE_DYNAMIC_FILTER', dynamicFees.resetTickFilter);
+    if (dynamicFees.feeControlNumerator !== undefined) setEnvIf('FEE_DYNAMIC_CONTROL', dynamicFees.feeControlNumerator);
+    if (dynamicFees.decayFilterBps !== undefined) setEnvIf('FEE_DYNAMIC_DECAY', dynamicFees.decayFilterBps);
 
     // Sniper
     if (sniperFees.startingFee !== undefined) setEnvIf('SNIPER_STARTING_FEE', sniperFees.startingFee);
@@ -201,7 +215,7 @@ const validateInput = (input) => {
     if (strictMode) {
         const description = pick(input, ['description', 'METADATA_DESCRIPTION']);
         const context = input.context || input.CONTEXT || {};
-        const messageId = pick(input, ['CONTEXT_MESSAGE_ID']) ?? context.messageId;
+        const messageId = pick(input, ['CONTEXT_MESSAGE_ID', 'CONTEXT_URL']) ?? context.messageId ?? context.url;
         const platform = (pick(input, ['CONTEXT_PLATFORM']) ?? context.platform ?? 'farcaster').toLowerCase();
         const devBuy = normalizeNumber(pick(input, ['devBuy', 'DEV_BUY_ETH_AMOUNT']));
 

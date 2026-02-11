@@ -3,10 +3,13 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { validateConfig } from '../lib/validator.js';
 import { createConfigFromSession, loadConfig, loadTokenConfig } from '../lib/config.js';
 import { processImageInput } from '../lib/ipfs.js';
+import { parseSmartSocialInput } from '../lib/social-parser.js';
+import { parseTokenCommand } from '../lib/parser.js';
 
 const baseConfig = () => ({
     name: 'Alpha Token',
@@ -177,6 +180,26 @@ test('loadConfig parses quoted VANITY env as true', () => {
     }
 });
 
+test('loadConfig infers context platform from CONTEXT_MESSAGE_ID URL', () => {
+    const keys = ['CONTEXT_PLATFORM', 'CONTEXT_MESSAGE_ID', 'TOKEN_IMAGE'];
+    const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+
+    delete process.env.CONTEXT_PLATFORM;
+    process.env.CONTEXT_MESSAGE_ID = 'https://github.com/HKUDS/MoChat';
+    process.env.TOKEN_IMAGE = 'https://example.com/context-url.png';
+
+    try {
+        const cfg = loadConfig();
+        assert.equal(cfg.context.platform, 'github');
+        assert.equal(cfg.context.messageId, 'https://github.com/HKUDS/MoChat');
+    } finally {
+        for (const k of keys) {
+            if (prev[k] === undefined) delete process.env[k];
+            else process.env[k] = prev[k];
+        }
+    }
+});
+
 test('loadConfig defaults static fees to 300 + 300 bps when env fees are missing', () => {
     const keys = ['FEE_TYPE', 'FEE_CLANKER_BPS', 'FEE_PAIRED_BPS', 'TOKEN_IMAGE'];
     const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
@@ -208,6 +231,44 @@ test('validateConfig caps static fees above 6% back to default 3% + 3%', () => {
     assert.equal(validated.fees.pairedFee, 300);
 });
 
+test('validateConfig preserves custom static fees for token.json source', () => {
+    const config = baseConfig();
+    config.fees = { type: 'static', clankerFee: 1750, pairedFee: 2250 };
+    config._meta = { smartValidation: true, allowCustomFeeRange: true, configSource: 'token-json' };
+    const validated = validateConfig(config);
+
+    assert.equal(validated.fees.clankerFee, 1750);
+    assert.equal(validated.fees.pairedFee, 2250);
+});
+
+test('validateConfig preserves custom dynamic maxFee for token.json source', () => {
+    const config = baseConfig();
+    config.fees = { type: 'dynamic', baseFee: 100, maxFee: 1500 };
+    config._meta = { smartValidation: true, allowCustomFeeRange: true, configSource: 'token-json' };
+    const validated = validateConfig(config);
+
+    assert.equal(validated.fees.baseFee, 100);
+    assert.equal(validated.fees.maxFee, 1500);
+});
+
+test('validateConfig strict mode rejects static fee above 5% when smart validation is disabled', () => {
+    const config = baseConfig();
+    config.fees = { type: 'static', clankerFee: 300, pairedFee: 300 };
+    config.context = { platform: 'farcaster', messageId: '0xabcdef12' };
+    config._meta = { strictMode: true, smartValidation: false };
+    assert.throws(() => validateConfig(config), /STRICT_MODE: Static total fee must be <= 500 bps/);
+});
+
+test('validateConfig strict mode auto-disables for static fee above 5% in smart mode', () => {
+    const config = baseConfig();
+    config.fees = { type: 'static', clankerFee: 300, pairedFee: 300 };
+    config.context = { platform: 'farcaster', messageId: '0xabcdef12' };
+    config._meta = { strictMode: true, smartValidation: true };
+    const validated = validateConfig(config);
+
+    assert.equal(validated._meta.strictMode, false);
+});
+
 test('loadTokenConfig prefers context URL ID when messageId mismatches', () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-context-'));
     const filePath = path.join(tmpDir, 'token.json');
@@ -227,6 +288,30 @@ test('loadTokenConfig prefers context URL ID when messageId mismatches', () => {
     try {
         const cfg = loadTokenConfig(filePath);
         assert.equal(cfg.context.messageId, '2020922261352706275');
+        assert.equal(cfg._meta.contextSource, 'context-url');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('loadTokenConfig auto-detects context platform from generic URL', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-context-generic-'));
+    const filePath = path.join(tmpDir, 'token.json');
+    const payload = {
+        name: 'Generic Context Token',
+        symbol: 'GCTX',
+        image: 'https://example.com/gctx.png',
+        fees: '6%',
+        context: {
+            url: 'https://github.com/HKUDS/MoChat'
+        }
+    };
+    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+
+    try {
+        const cfg = loadTokenConfig(filePath);
+        assert.equal(cfg.context.platform, 'github');
+        assert.equal(cfg.context.messageId, 'https://github.com/HKUDS/MoChat');
         assert.equal(cfg._meta.contextSource, 'context-url');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -288,11 +373,57 @@ test('validateConfig auto-fills missing name/symbol/image in smart mode', () => 
     assert.equal(/^https?:\/\//.test(validated.image), true);
 });
 
+test('validateConfig does not auto-correct when _meta.smartValidation is false', () => {
+    const config = baseConfig();
+    config.image = '';
+    config._meta = { smartValidation: false };
+    assert.throws(() => validateConfig(config), /Token Image must be a valid HTTP\(S\) URL or IPFS CID/);
+});
+
 test('validateConfig normalizes twitter context URL to status ID', () => {
     const config = baseConfig();
     config.context = { platform: 'twitter', messageId: 'https://x.com/user/status/123456789' };
     const validated = validateConfig(config);
     assert.equal(validated.context.messageId, '123456789');
+});
+
+test('validateConfig accepts non-twitter/farcaster context platforms', () => {
+    const config = baseConfig();
+    config.context = { platform: 'github', messageId: 'https://github.com/HKUDS/MoChat' };
+    config._meta = { smartValidation: false, configSource: 'token-json' };
+    const validated = validateConfig(config);
+    assert.equal(validated.context.platform, 'github');
+    assert.equal(validated.context.messageId, 'https://github.com/HKUDS/MoChat');
+});
+
+test('parseSmartSocialInput treats generic URL as context with detected platform', () => {
+    const parsed = parseSmartSocialInput('check this https://t.me/mochatdotio');
+    assert.equal(parsed.context?.platform, 'telegram');
+    assert.equal(parsed.context?.messageId, 'https://t.me/mochatdotio');
+});
+
+test('parseSmartSocialInput prioritizes tweet/cast over generic URLs', () => {
+    const parsed = parseSmartSocialInput('site https://mochat.io post https://x.com/mochatdotio/status/2020922261352706275');
+    assert.equal(parsed.context?.platform, 'twitter');
+    assert.equal(parsed.context?.messageId, '2020922261352706275');
+});
+
+test('parseSmartSocialInput keeps generic social profiles when tweet/cast becomes context', () => {
+    const parsed = parseSmartSocialInput('site https://mochat.io post https://x.com/mochatdotio/status/2020922261352706275');
+    assert.equal(parsed.socials.website, 'https://mochat.io');
+    assert.equal(parsed.context?.platform, 'twitter');
+});
+
+test('parseTokenCommand prioritizes tweet/cast over generic URLs', () => {
+    const parsed = parseTokenCommand('Launch MOCHAT (MoChat) https://mochat.io https://x.com/mochatdotio/status/2020922261352706275');
+    assert.equal(parsed.context?.platform, 'twitter');
+    assert.equal(parsed.context?.messageId, 'https://x.com/mochatdotio/status/2020922261352706275');
+});
+
+test('parseTokenCommand parses split percent fees without halving', () => {
+    const parsed = parseTokenCommand('/go MOON "Moon Token" 3% 3%');
+    assert.equal(parsed.fees?.clankerFee, 300);
+    assert.equal(parsed.fees?.pairedFee, 300);
 });
 
 test('processImageInput rejects local file larger than 10MB', async () => {
@@ -382,4 +513,137 @@ test('loadTokenConfig accepts top-level vanity and metadata.description', () => 
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+});
+
+test('loadTokenConfig parses fees.mode static with explicit bps fields', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-fees-static-mode-'));
+    const tokenPath = path.join(tmpDir, 'token.json');
+
+    fs.writeFileSync(tokenPath, JSON.stringify({
+        name: 'Static Mode Token',
+        symbol: 'SMT',
+        image: 'https://example.com/static-mode.png',
+        fees: {
+            mode: 'static',
+            static: {
+                clankerFeeBps: 1750,
+                pairedFeeBps: 2250
+            }
+        },
+        context: { platform: 'twitter', messageId: '123' }
+    }));
+
+    try {
+        const cfg = loadTokenConfig(tokenPath);
+        assert.equal(cfg.fees.type, 'static');
+        assert.equal(cfg.fees.clankerFee, 1750);
+        assert.equal(cfg.fees.pairedFee, 2250);
+        assert.equal(cfg._meta.allowCustomFeeRange, true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('loadTokenConfig parses fees.mode dynamic with default 1%-10% range', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-fees-dynamic-mode-'));
+    const tokenPath = path.join(tmpDir, 'token.json');
+
+    fs.writeFileSync(tokenPath, JSON.stringify({
+        name: 'Dynamic Mode Token',
+        symbol: 'DMT',
+        image: 'https://example.com/dynamic-mode.png',
+        fees: {
+            mode: 'dynamic',
+            dynamic: {}
+        },
+        context: { platform: 'twitter', messageId: '123' }
+    }));
+
+    try {
+        const cfg = loadTokenConfig(tokenPath);
+        assert.equal(cfg.fees.type, 'dynamic');
+        assert.equal(cfg.fees.baseFee, 100);
+        assert.equal(cfg.fees.maxFee, 1000);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('loadTokenConfig defaults to strict smartValidation=false for token.json edits', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-smart-default-'));
+    const filePath = path.join(tmpDir, 'token.json');
+    const payload = {
+        name: 'Strict Token',
+        symbol: 'STR',
+        image: 'https://example.com/strict.png',
+        fees: '6%'
+    };
+    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+
+    try {
+        const cfg = loadTokenConfig(filePath);
+        assert.equal(cfg._meta.smartValidation, false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('loadTokenConfig allows explicit smartValidation override', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-smart-override-'));
+    const filePath = path.join(tmpDir, 'token.json');
+    const payload = {
+        name: 'Smart Token',
+        symbol: 'SMRT',
+        image: 'https://example.com/smart.png',
+        fees: '6%',
+        advanced: {
+            smartValidation: true
+        }
+    };
+    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+
+    try {
+        const cfg = loadTokenConfig(filePath);
+        assert.equal(cfg._meta.smartValidation, true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('openclaw-handler strict mode accepts context.url as context source', () => {
+    const input = {
+        name: 'OpenClaw Strict',
+        symbol: 'OCS',
+        image: 'https://example.com/oc.png',
+        description: 'strict mode with context url',
+        fees: {
+            type: 'static',
+            clankerFee: 250,
+            pairedFee: 250
+        },
+        context: {
+            platform: 'farcaster',
+            url: 'https://warpcast.com/moon/0xabcdef12'
+        },
+        strictMode: true,
+        smartValidation: false,
+        devBuy: 0.01,
+        dryRun: true
+    };
+
+    const result = spawnSync(process.execPath, ['openclaw-handler.js'], {
+        cwd: process.cwd(),
+        input: JSON.stringify(input),
+        encoding: 'utf8',
+        env: {
+            ...process.env,
+            DRY_RUN: 'true'
+        }
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+
+    const output = JSON.parse(result.stdout.trim());
+    assert.equal(output.success, true);
+    assert.equal(output.dryRun, true);
 });

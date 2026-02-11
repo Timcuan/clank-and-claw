@@ -43,12 +43,16 @@ Detailed system documentation and sequence diagrams: `docs/SYSTEM_ARCHITECTURE.m
 
 `SMART_VALIDATION=true` enables auto-heal behavior:
 
-- High fees (e.g. `20%`) are auto-capped to protocol-safe max (`6%` total)
+- High fees (e.g. `20%`) are auto-capped to protocol-safe max (`6%` total) for bot/env flows
 - Missing image gets fallback from `DEFAULT_IMAGE_URL` (or default CID gateway)
 - Missing context gets fallback from `DEFAULT_CONTEXT_ID`; if absent, synthetic context is generated
+- Context platform/messageId can be auto-derived from any provided source URL
 - Invalid social links are normalized or dropped
 - Invalid reward split is rebalanced to `10000 bps`
 - Invalid strict-mode input is auto-relaxed to standard mode (deploy continues)
+
+`token.json` can opt out per file with `advanced.smartValidation: false` (strict mode, no auto-correct).
+`token.json` also supports explicit fee mode config (`fees.mode = static|dynamic`) and does not enforce a hard fee cap in validator.
 
 Preflight now shows how many smart fixes were applied.
 

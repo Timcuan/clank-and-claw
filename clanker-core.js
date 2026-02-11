@@ -15,6 +15,7 @@ const FACTORY_ADDRESS = '0xe85a59c628f7d27878aceb4bf3b35733630083a9';
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 const PRIVATE_KEY_REGEX = /^0x[0-9a-fA-F]{64}$/;
+const SDK_CONTEXT_PLATFORMS = new Set(['twitter', 'farcaster', 'clanker']);
 const RECEIPT_TIMEOUT_MS = 90_000;
 const FALLBACK_RECEIPT_TIMEOUT_MS = 45_000;
 
@@ -207,6 +208,16 @@ export async function deployToken(config, options = {}) {
 
         // Sanitize config for SDK (remove internal keys)
         const { _meta, ...sdkConfig } = config;
+        if (sdkConfig.context && typeof sdkConfig.context === 'object') {
+            const rawPlatform = String(sdkConfig.context.platform || '').trim().toLowerCase();
+            const hasMessageId = Boolean(String(sdkConfig.context.messageId || '').trim());
+            if ((!rawPlatform && hasMessageId) || (rawPlatform && !SDK_CONTEXT_PLATFORMS.has(rawPlatform))) {
+                if (rawPlatform && rawPlatform !== 'clanker') {
+                    console.log(`ℹ️  Context platform '${rawPlatform}' mapped to 'clanker' for SDK compatibility.`);
+                }
+                sdkConfig.context.platform = 'clanker';
+            }
+        }
 
         const { txHash, error: deployError } = await clanker.deploy(sdkConfig);
 

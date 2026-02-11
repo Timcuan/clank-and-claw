@@ -2,19 +2,23 @@
 
 Production-grade token deployment suite for Base using Clanker SDK.
 
-Deploy from:
+Deploy entry points:
 - Telegram bot (`telegram-bot.js`)
 - CLI (`deploy.js`)
 - OpenClaw handler (`openclaw-handler.js`)
 
-All paths use one shared smart validation pipeline so deployment can continue even when user input is incomplete.
+All entry points share one canonical pipeline:
+1. Config builder (`lib/config.js`)
+2. Smart validator (`lib/validator.js`)
+3. On-chain deploy engine (`clanker-core.js`)
 
-## Why This System
+## Documentation Map
 
-- Smart auto-heal for messy input (fees/context/image/social/rewards)
-- RPC + gateway failover for unstable VPS/network conditions
-- Consistent preflight output before on-chain execution
-- Session-safe Telegram workflow for multi-user operation
+Start here based on your role:
+- Operator runbook (visual flow + troubleshooting): `docs/VISUAL_FLOW_RUNBOOK.md`
+- System architecture (component-level): `docs/SYSTEM_ARCHITECTURE.md`
+- Token config reference (`token.json`): `TOKEN_CONFIG_GUIDE.md`
+- Release history: `RELEASES.md`
 
 ## Visual Overview
 
@@ -37,24 +41,29 @@ flowchart LR
     CORE --> BS[Basescan]
 ```
 
-Detailed system documentation and sequence diagrams: `docs/SYSTEM_ARCHITECTURE.md`
+## Core Behavior
 
-## Smart Logic (Default ON)
+### Smart Logic (default ON)
 
 `SMART_VALIDATION=true` enables auto-heal behavior:
+- Missing/invalid image -> fallback image
+- Missing context -> derive from URL, else default/synthetic context
+- Invalid socials -> normalize or drop
+- Broken rewards split -> rebalance to `10000 bps`
+- Invalid strict-mode requirements -> auto-relax to standard mode
 
-- High fees (e.g. `20%`) are auto-capped to protocol-safe max (`6%` total) for bot/env flows
-- Missing image gets fallback from `DEFAULT_IMAGE_URL` (or default CID gateway)
-- Missing context gets fallback from `DEFAULT_CONTEXT_ID`; if absent, synthetic context is generated
-- Context platform/messageId can be auto-derived from any provided source URL
-- Invalid social links are normalized or dropped
-- Invalid reward split is rebalanced to `10000 bps`
-- Invalid strict-mode input is auto-relaxed to standard mode (deploy continues)
+Notes:
+- `token.json` flow can control strictness via `advanced.smartValidation`.
+- `token.json` supports `fees.mode = static | dynamic` with explicit parameters.
+- Preflight output includes smart-fix summary.
 
-`token.json` can opt out per file with `advanced.smartValidation: false` (strict mode, no auto-correct).
-`token.json` also supports explicit fee mode config (`fees.mode = static|dynamic`) and does not enforce a hard fee cap in validator.
+### Input Policy
 
-Preflight now shows how many smart fixes were applied.
+The bot now allows broad free-form input and relies on validator auto-heal.
+
+Operational effect:
+- Name/symbol can be empty or whitespace from chat input.
+- Deploy remains possible because validator generates safe fallback when needed.
 
 ## Quick Start
 
@@ -80,50 +89,94 @@ Telegram bot:
 npm run start
 ```
 
-Recommended on VPS (PM2, single instance):
+CLI deploy (`token.json`):
+```bash
+npm run deploy
+```
+
+Dry-run deploy:
+```bash
+npm test
+```
+
+Hardening suite:
+```bash
+npm run test:hardening
+```
+
+## VPS Production Workflow
+
+Recommended on VPS (PM2 + single instance):
+
 ```bash
 ~/bot-setup.sh
+~/clawctl doctor
 ~/bot-start.sh
 ~/bot-status.sh
 pm2 logs clanker-bot
 ```
 
-All-in-one VPS wizard/manager:
+All-in-one manager:
+
 ```bash
-npm run vps:wizard
-# or on VPS:
 ~/clawctl wizard
 ```
 
-CLI (from `token.json`):
+Direct manager commands:
+
 ```bash
-npm run deploy
+~/clawctl doctor
+~/clawctl telegram-setup
+~/clawctl start
+~/clawctl status
+~/clawctl update
+~/clawctl heal
+~/clawctl backup
+~/clawctl uninstall
 ```
 
-Dry-run test:
-```bash
-npm test
-```
+## Telegram Command Surface
 
-Hardening test suite:
-```bash
-npm run test:hardening
-```
+Recommended command:
+- `/a` open button-first control panel
 
-## Telegram Commands
-
+Other commands:
 - `/deploy` start guided wizard
-- `/go <SYMBOL> "<NAME>" <FEES>` fast setup
-- `/menu` open inline button control panel (quick actions + session editing)
-- `/spoof <ADDRESS>` enable stealth split
-- `/spoof off` disable spoofing
-- `/status` runtime status
+- `/go <SYMBOL> "<NAME>" <FEES>` quick setup
+- `/spoof <ADDRESS>` enable spoof
+- `/spoof off` disable spoof
+- `/status` wallet/runtime check
 - `/health` deep health checks (Telegram origins + RPC endpoints)
-- `/cancel` reset current session
+- `/cancel` reset session
 
-## VPS / Production Baseline
+## Telegram Flow Summary
 
-Recommended `.env` baseline:
+```mermaid
+flowchart TD
+    A[/a] --> B[Control Panel]
+    B --> C[Settings]
+    B --> D[Wizard]
+    B --> E[Deploy]
+
+    C --> C1[Set Name]
+    C --> C2[Set Symbol]
+    C --> C3[Set Fees]
+    C --> C4[Set Context]
+    C --> C5[Set Image]
+    C --> C6[Set Spoof]
+    C --> C7[Fallback Tools]
+
+    D --> D1[Name]
+    D1 --> D2[Symbol]
+    D2 --> D3[Fees]
+    D3 --> D4[Image Optional]
+    D4 --> D5[Context Optional]
+    D5 --> E
+```
+
+Detailed state-by-state flow: `docs/VISUAL_FLOW_RUNBOOK.md`
+
+## Recommended `.env` Baseline
 
 ```env
 RPC_URL=https://mainnet.base.org
@@ -139,33 +192,37 @@ DEFAULT_CONTEXT_ID=<valid_post_or_cast_id>
 DEFAULT_IMAGE_URL=
 ```
 
-## VPS Lifecycle Wizard
+## Common Incidents
 
-`vps-manager.sh` is a unified operational wizard/CLI with robust fallbacks:
+### Invalid bot token (`Unauthorized`)
 
-- `install` bootstrap/reinstall VPS setup
-- `update` git pull + npm install + hardening tests + auto restart bot
-- `telegram-setup` interactive Telegram token/admin setup with live token validation (`getMe`)
-- `heal` clean stale lock/process conflict + webhook cleanup + restart
-- `backup` / `restore` operational backup workflow
-- `uninstall` clean removal of PM2 app, helper scripts, lock files, and project directory
+1. `~/clawctl telegram-setup`
+2. `~/clawctl doctor`
+3. `~/clawctl start`
+4. `pm2 logs clanker-bot`
 
-Common commands:
+Do not keep placeholder token values in `.env`.
 
-```bash
-~/clawctl telegram-setup
-~/clawctl status
-~/clawctl update
-~/clawctl heal
-~/clawctl backup
-~/clawctl uninstall
-```
+### `getUpdates` conflict (multiple instances)
+
+1. `~/clawctl status`
+2. `~/clawctl stop`
+3. `~/clawctl heal`
+4. `~/clawctl start`
+
+### RPC instability
+
+1. `~/clawctl doctor`
+2. `~/clawctl netcheck`
+3. Add/verify `RPC_FALLBACK_URLS`
+4. Restart bot
 
 ## Project Map
 
 ```text
 clank-and-claw/
 ├── vps-manager.sh
+├── vps-setup.sh
 ├── telegram-bot.js
 ├── deploy.js
 ├── openclaw-handler.js
@@ -179,6 +236,7 @@ clank-and-claw/
 │   ├── telegram-network.js
 │   └── session-manager.js
 ├── docs/
+│   ├── VISUAL_FLOW_RUNBOOK.md
 │   └── SYSTEM_ARCHITECTURE.md
 ├── test/
 └── token.json
@@ -186,22 +244,8 @@ clank-and-claw/
 
 ## Operational Notes
 
-- If deployment tx is sent but primary RPC times out, receipt recovery automatically checks fallback RPCs.
-- `DRY_RUN=true` validates and simulates deployment without spending gas.
-- For maximum Clankerworld consistency, set `DEFAULT_CONTEXT_ID` to a valid tweet/cast ID.
-- Run only one bot instance per token to avoid Telegram `getUpdates` conflict. The bot now uses a local lock file to block duplicate local runs.
-- PM2 now stops restart loop on fatal startup config errors (e.g. invalid/missing bot token).
+- Only run one bot instance per token to avoid Telegram polling conflicts.
+- Bot uses local lock file and conflict backoff to reduce duplicate runner issues.
+- PM2 startup failures due to fatal config (e.g. invalid token) are treated as hard errors.
+- `DRY_RUN=true` validates and simulates deploy without gas spend.
 
-## Telegram Setup & Unauthorized Fix
-
-If logs show `Invalid bot token (Unauthorized)`:
-
-1. Run `~/clawctl telegram-setup` and input a valid token from `@BotFather`.
-2. Run `~/clawctl start`.
-3. Verify with `~/clawctl status` and `pm2 logs clanker-bot`.
-
-Do not leave placeholder values like `123456789:REPLACE_ME` in `.env`.
-
-## Release Notes
-
-See `RELEASES.md` for version history and patch details.

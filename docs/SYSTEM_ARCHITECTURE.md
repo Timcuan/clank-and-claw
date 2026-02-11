@@ -1,140 +1,200 @@
 # System Architecture - Clank & Claw
 
-This document explains how the platform works end-to-end, including smart validation logic, deployment paths, and failure recovery behavior.
+This document explains internals of the deployment stack and how runtime behavior is enforced.
 
-## 1. High-Level Architecture
+If you need operator steps and troubleshooting, use `docs/VISUAL_FLOW_RUNBOOK.md`.
+
+## 1. Architecture at a Glance
 
 ```mermaid
 flowchart LR
-    U[User / Operator] --> TG[Telegram Bot]
-    U --> CLI[CLI deploy.js]
-    U --> OC[OpenClaw Handler]
+    OP[Operator] --> TG[telegram-bot.js]
+    OP --> CLI[deploy.js]
+    OP --> OC[openclaw-handler.js]
 
-    TG --> CFG[Config Builder]
+    TG --> CFG[lib/config.js]
     CLI --> CFG
     OC --> CFG
 
-    CFG --> VAL[Smart Validator]
-    VAL --> CORE[clanker-core deploy engine]
+    CFG --> VAL[lib/validator.js]
+    VAL --> CORE[clanker-core.js]
 
+    TG --> IPFS[lib/ipfs.js]
+    TG --> SES[lib/session-manager.js]
+
+    CORE --> SDK[Clanker SDK]
     CORE --> RPCP[Primary RPC]
     CORE --> RPCF[Fallback RPCs]
-    CORE --> SDK[Clanker SDK v4]
-
-    TG --> IPFS[IPFS Providers]
-    CFG --> META[Metadata + Context]
-
-    CORE --> BASESCAN[Basescan]
+    CORE --> EX[Explorer URL]
 ```
 
-## 2. Deployment Entry Points
+## 2. Canonical Deployment Pipeline
 
-- Telegram bot: conversational agent, session-based, multi-user safe.
-- CLI (`deploy.js`): deterministic file/env deployment path with preflight.
-- OpenClaw (`openclaw-handler.js`): JSON input gateway for AI/automation tools.
+All entry points converge into one deterministic sequence:
 
-All entry points converge into the same 3-stage pipeline:
+1. Build config object.
+2. Normalize and validate config.
+3. Submit tx through deploy engine.
+4. Recover receipt with fallback RPC when needed.
+5. Return unified result object.
 
-1. Build config (`lib/config.js`)
-2. Smart validation + auto-heal (`lib/validator.js`)
-3. Chain deploy (`clanker-core.js`)
+```mermaid
+sequenceDiagram
+    participant EP as Entry Point
+    participant CFG as Config Builder
+    participant VAL as Validator
+    participant CORE as Deploy Engine
+    participant RPC as RPC Layer
 
-## 3. Smart Validation & Auto-Heal
+    EP->>CFG: load/build config
+    CFG-->>EP: structured config
+    EP->>VAL: validateConfig(config)
+    VAL-->>EP: deployable config + auto-fix metadata
+    EP->>CORE: deployToken(config)
+    CORE->>RPC: send tx
+    RPC-->>CORE: tx hash
+    CORE->>RPC: await receipt (+ fallback)
+    CORE-->>EP: success/fail payload
+```
 
-Smart mode is enabled by default (`SMART_VALIDATION=true`).
+## 3. Entry Point Contracts
 
-### Auto-heal matrix
+### Telegram (`telegram-bot.js`)
+- Stateful conversational interface per chat.
+- Button-first control panel (`/a`).
+- Image input guarded by explicit states only.
+- Builds config from session using `createConfigFromSession`.
 
-| Area | If user input is incomplete/invalid | System behavior |
+### CLI (`deploy.js`)
+- Deterministic config path from `.env` or `token.json`.
+- Preflight and dry-run path for safety.
+
+### OpenClaw (`openclaw-handler.js`)
+- JSON input gateway for automation/agents.
+- Input mapping to env-compatible deploy schema.
+- Returns machine-readable JSON result.
+
+## 4. Validator Responsibilities
+
+Validator (`lib/validator.js`) is the guardrail boundary before on-chain calls.
+
+### Core responsibilities
+- Normalize metadata and context.
+- Validate static/dynamic fees.
+- Normalize or drop malformed social URLs.
+- Validate rewards recipients and rebalance BPS.
+- Enforce strict-mode constraints or auto-relax in smart mode.
+
+### Auto-heal behavior in smart mode
+
+| Domain | Detection | Action |
 |---|---|---|
-| Name/Symbol | Missing or malformed | Generate safe fallback and normalize |
-| Image | Missing/invalid URL/CID | Apply fallback image (`DEFAULT_IMAGE_URL` or default CID gateway) |
-| Fees | Too high / invalid format | Clamp/reset to protocol-safe fee (max 6%) for env/bot; token.json custom mode can bypass cap |
-| Context | Missing message ID/platform | Auto-derive from source URL, else use `DEFAULT_CONTEXT_ID`, else synthetic context |
-| Social URLs | Bare/partial URLs | Normalize to valid `https://...` or drop invalid entries |
-| Rewards | Invalid bps/admin/recipient | Drop broken recipients and rebalance to 10000 bps |
-| Strict mode | Requirements incomplete | Auto-relax to standard mode (deploy continues) |
+| Name/Symbol | empty/invalid | generate fallback values |
+| Image | invalid URL/CID | set fallback image |
+| Static fees | invalid/negative/too high | normalize and cap/reset |
+| Dynamic fees | invalid range | clamp and align base/max |
+| Context | missing | derive URL or fallback context |
+| Rewards | invalid recipients/bps | drop/rebalance to 10000 |
 
-### Validation decision flow
+## 5. Telegram Runtime Model
+
+### State categories
+- Panel input states: `menu_*`
+- Wizard states: `wizard_*`
+- Session states: `idle`, `collecting`, `confirming`
+
+### Media safety
+- Accepted only when state is `menu_image` or `wizard_image`.
+- Outside those states, image message is deleted when possible and user is redirected to proper flow.
+
+### Control routing
 
 ```mermaid
 flowchart TD
-    A[Incoming Config] --> B[Normalize fields]
-    B --> C{SMART_VALIDATION=true?}
-    C -- No --> D[Strict validation; throw on errors]
-    C -- Yes --> E[Apply auto-fixes]
-    E --> F[Collect auto-fix logs]
-    F --> G[Return deployable config]
+    A[Incoming Telegram Update] --> B{callback_query?}
+    B -- Yes --> C[Map button action]
+    C --> D[handleMenuAction]
+
+    B -- No --> E{message.text?}
+    E -- Yes --> F[Command routing]
+    F --> G[processMessage state machine]
+
+    E -- No --> H{photo/document image?}
+    H -- Yes --> I{image state allowed?}
+    I -- Yes --> J[processPhoto -> IPFS]
+    I -- No --> K[delete + guidance]
 ```
 
-## 4. Telegram Bot Runtime Flow
+## 6. Reliability and Failover Layers
+
+### RPC resilience
+- Primary RPC first.
+- Fallback RPC list for retries/recovery.
+- Receipt recovery for late confirmations.
+
+### Telegram resilience
+- Supports multiple Telegram API bases.
+- Retry policy for transient errors.
+- Distinguishes retryable and permanent failures.
+- Conflict backoff for duplicate polling instances.
+
+### Process resilience
+- Local lock file to block duplicate local bot run.
+- PM2 as recommended process supervisor on VPS.
+- `vps-manager.sh heal` for webhook/lock/process cleanup.
+
+## 7. VPS Management Architecture
+
+`vps-manager.sh` provides operational lifecycle commands:
+- `doctor`: preflight health gate
+- `start/stop/restart/status/logs`
+- `update`: git pull + deps + tests + restart
+- `heal`: recover from lock/process/webhook conflicts
+- `backup/restore/uninstall`
 
 ```mermaid
-sequenceDiagram
-    participant User
-    participant Bot as telegram-bot.js
-    participant Config as lib/config.js
-    participant Validator as lib/validator.js
-    participant Core as clanker-core.js
-    participant RPC as Base RPC
-
-    User->>Bot: Send token intent (text/link/image)
-    Bot->>Bot: Parse + update session state
-    User->>Bot: /confirm
-    Bot->>Config: createConfigFromSession(...)
-    Config-->>Bot: structured config
-    Bot->>Validator: validateConfig(config)
-    Validator-->>Bot: healed + validated config
-    Bot->>Core: deployToken(config)
-    Core->>RPC: tx submit + wait receipt (+ fallback RPC recovery)
-    Core-->>Bot: success/fail result
-    Bot-->>User: deployment status + scan URL
+flowchart TD
+    A[clawctl doctor] --> B{critical error?}
+    B -- Yes --> C[Fix env/token/rpc]
+    C --> A
+    B -- No --> D[clawctl start]
+    D --> E[PM2 app online]
+    E --> F[Monitor logs]
 ```
 
-## 5. CLI/OpenClaw Runtime Flow
+## 8. Data and Config Sources
 
-```mermaid
-sequenceDiagram
-    participant Operator
-    participant CLI as deploy.js / openclaw-handler.js
-    participant Config as lib/config.js
-    participant Validator as lib/validator.js
-    participant Core as clanker-core.js
+Priority model by entry point:
 
-    Operator->>CLI: token.json / env / JSON payload
-    CLI->>Config: load config
-    CLI->>Validator: smart validate
-    Validator-->>CLI: preflight-ready config + auto-fixes
-    CLI->>Core: deployToken(config)
-    Core-->>CLI: tx hash + token address (if resolved)
-    CLI-->>Operator: preflight summary + result
-```
+- Telegram: chat session -> `createConfigFromSession`
+- CLI: `token.json` (or env path) -> `loadTokenConfig` / `loadConfig`
+- OpenClaw: JSON payload -> env mapping -> `loadConfig`
 
-## 6. Network Resilience Model
+Shared output target:
+- Unified config object accepted by validator and deploy engine.
 
-- Primary + fallback RPC probing before deployment.
-- Receipt recovery if primary RPC times out after tx submission.
-- Telegram API origin failover (`TELEGRAM_API_BASES`).
-- Retry policy differentiates transient vs permanent Telegram API failures.
-- IPFS provider/gateway fallback for media handling.
+## 9. Security and Safety Guardrails
 
-## 7. Required Runtime Guarantees
+- Invalid wallet key blocks deploy.
+- Placeholder Telegram token blocks bot startup in manager flow.
+- Uninstall includes path safety checks to avoid unsafe directory removal.
+- Session isolation avoids cross-chat state leakage.
 
-- Deploy process should not fail for common user input mistakes.
-- All deploy paths share one canonical validator.
-- Preflight exposes smart-fix summary for observability.
-- Session isolation prevents cross-chat state pollution.
-
-## 8. Recommended Production Baseline
+## 10. Recommended Production Baseline
 
 ```env
 SMART_VALIDATION=true
-VANITY=true
 REQUIRE_CONTEXT=true
-DEFAULT_CONTEXT_ID=<valid_post_or_cast_id>
+VANITY=true
 RPC_URL=https://mainnet.base.org
 RPC_FALLBACK_URLS=<rpc1>,<rpc2>,<rpc3>
 TELEGRAM_API_BASES=https://api.telegram.org
+IPFS_GATEWAYS=<gateway1>,<gateway2>
 ```
 
-This baseline keeps deployments flexible while preserving indexing quality and runtime reliability.
+## 11. Cross-Reference
+
+- Operator flow and runbook: `docs/VISUAL_FLOW_RUNBOOK.md`
+- Token parameter reference: `TOKEN_CONFIG_GUIDE.md`
+- Release timeline: `RELEASES.md`
+

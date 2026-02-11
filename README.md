@@ -153,7 +153,7 @@ Other commands:
 
 ```mermaid
 flowchart TD
-    A[/a] --> B[Control Panel]
+    A["/a"] --> B[Control Panel]
     B --> C[Settings]
     B --> D[Wizard]
     B --> E[Deploy]
@@ -248,4 +248,3 @@ clank-and-claw/
 - Bot uses local lock file and conflict backoff to reduce duplicate runner issues.
 - PM2 startup failures due to fatal config (e.g. invalid token) are treated as hard errors.
 - `DRY_RUN=true` validates and simulates deploy without gas spend.
-

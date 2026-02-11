@@ -79,7 +79,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    S[/a] --> P[Control Panel]
+    S["/a"] --> P[Control Panel]
     P --> W[Wizard]
     P --> ST[Settings]
     P --> DP[Deploy]
@@ -103,7 +103,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    D[/deploy] --> N[Step 1: Name]
+    D["/deploy"] --> N[Step 1: Name]
     N --> SY[Step 2: Symbol]
     SY --> FE[Step 3: Fees]
     FE --> IM[Step 3.5: Image]
@@ -239,4 +239,3 @@ sequenceDiagram
 2. Confirm tx hash on Base explorer.
 3. Confirm token address if returned by deploy result.
 4. Keep logs for incident review if deployment took fallback path.
-

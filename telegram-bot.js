@@ -46,6 +46,8 @@ const RPC_HEALTH_TIMEOUT_MS = 10000;
 const FATAL_CONFIG_EXIT_CODE = 2;
 const TELEGRAM_CONFLICT_BACKOFF_MS = Math.max(5000, Number(process.env.TELEGRAM_CONFLICT_BACKOFF_MS || 30000));
 const TELEGRAM_MAX_CONFLICT_BACKOFF_MS = Math.max(TELEGRAM_CONFLICT_BACKOFF_MS, Number(process.env.TELEGRAM_MAX_CONFLICT_BACKOFF_MS || 300000));
+const TELEGRAM_MAX_CONFLICT_ERRORS = Math.max(1, Number(process.env.TELEGRAM_MAX_CONFLICT_ERRORS || 20));
+const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const TOKEN_FINGERPRINT = String(process.env.TELEGRAM_BOT_TOKEN || '')
     .slice(0, 16)
     .replace(/[^a-zA-Z0-9_-]/g, '_') || 'bot';
@@ -95,6 +97,12 @@ const isPermanentStartupError = (message) => {
         || text.includes('another bot instance is already running')
         || text.includes('unauthorized')
     );
+};
+
+const fatalPollingExit = (reason) => {
+    console.error(`❌ Fatal polling error: ${reason}`);
+    releaseBotLock();
+    process.exit(FATAL_CONFIG_EXIT_CODE);
 };
 
 const isPidAlive = (pid) => {
@@ -490,15 +498,38 @@ const editMessage = async (chatId, messageId, text) => {
 };
 
 const sendButtons = async (chatId, text, buttons) => {
+    const keyboard = {
+        inline_keyboard: buttons.map(row =>
+            row.map(btn => ({ text: btn.text, callback_data: btn.data }))
+        )
+    };
+
+    const markdownPayload = {
+        chat_id: chatId,
+        text: truncateForTelegram(text),
+        parse_mode: 'Markdown',
+        disable_web_page_preview: true,
+        reply_markup: keyboard
+    };
+
+    try {
+        const result = await apiCall('sendMessage', markdownPayload);
+        if (result?.ok !== false) {
+            return result;
+        }
+        if (!isMarkdownParseError(result)) {
+            console.warn(`Telegram sendButtons failed: ${result?.description || 'unknown error'}`);
+            return result;
+        }
+    } catch (e) {
+        console.warn(`Telegram sendButtons request error: ${e.message}`);
+    }
+
     return await apiCall('sendMessage', {
         chat_id: chatId,
-        text,
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: buttons.map(row =>
-                row.map(btn => ({ text: btn.text, callback_data: btn.data }))
-            )
-        }
+        text: truncateForTelegram(stripMarkdown(text)),
+        disable_web_page_preview: true,
+        reply_markup: keyboard
     });
 };
 
@@ -528,15 +559,196 @@ const validatePrivateKey = () => {
 
 const getReadyStatus = (token) => {
     const missing = [];
-    if (!token.name && !token.symbol) {
-        missing.push('name_or_symbol');
-    }
     return {
         ready: missing.length === 0,
         missing,
         hasContext: !!token.context?.messageId,
         hasImage: !!token.image
     };
+};
+
+const UI_ACTIONS = {
+    MENU: 'm_menu',
+    WIZARD: 'm_wizard',
+    SETTINGS: 'm_settings',
+    FALLBACK: 'm_fallback',
+    SET_NAME: 'm_name',
+    SET_SYMBOL: 'm_symbol',
+    SET_FEES: 'm_fees',
+    FEE_PRESET_6: 'm_fee_6',
+    FEE_PRESET_5: 'm_fee_5',
+    SET_CONTEXT: 'm_context',
+    SET_IMAGE: 'm_image',
+    SET_SPOOF: 'm_spoof',
+    STATUS: 'm_status',
+    HEALTH: 'm_health',
+    DEPLOY: 'm_deploy',
+    CANCEL: 'm_cancel',
+    HELP: 'm_help',
+    WIZ_FEE_6: 'w_fee_6',
+    WIZ_FEE_5: 'w_fee_5',
+    WIZ_SKIP_IMAGE: 'w_skip_img',
+    WIZ_SKIP_CONTEXT: 'w_skip_ctx',
+    FB_AUTOFILL: 'fb_autofill',
+    FB_CLEAR_IMAGE: 'fb_clear_img',
+    FB_CLEAR_CONTEXT: 'fb_clear_ctx',
+    FB_CLEAR_SOCIALS: 'fb_clear_socials'
+};
+
+const IMAGE_INPUT_STATES = new Set(['menu_image', 'wizard_image']);
+
+const canAcceptImageInput = (session) => IMAGE_INPUT_STATES.has(String(session?.state || ''));
+
+const deleteTelegramMessage = async (chatId, messageId) => {
+    if (!chatId || !messageId) return;
+    try {
+        await apiCall('deleteMessage', {
+            chat_id: chatId,
+            message_id: messageId
+        });
+    } catch {
+        // Ignore if bot cannot delete user messages in current chat type/permissions.
+    }
+};
+
+const handleUnexpectedImageInput = async (chatId, messageId, session) => {
+    await deleteTelegramMessage(chatId, messageId);
+    await sendMessage(chatId, 'Image ignored. Use `/a` -> `Settings` -> `Image` before uploading.');
+    if (session) {
+        await showControlPanel(chatId, session, '*Session Panel*');
+    }
+};
+
+const getPanelButtons = (token, ready) => {
+    const deployLabel = ready ? 'Deploy' : 'Validate';
+
+    return [
+        [{ text: deployLabel, data: UI_ACTIONS.DEPLOY }, { text: 'Wizard', data: UI_ACTIONS.WIZARD }],
+        [{ text: 'Settings', data: UI_ACTIONS.SETTINGS }, { text: 'Status', data: UI_ACTIONS.STATUS }],
+        [{ text: 'Health', data: UI_ACTIONS.HEALTH }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+    ];
+};
+
+const getSettingsButtons = (token) => {
+    const spoofLabel = token?.spoofTo ? 'Spoof: On' : 'Spoof: Off';
+    return [
+        [{ text: 'Name', data: UI_ACTIONS.SET_NAME }, { text: 'Symbol', data: UI_ACTIONS.SET_SYMBOL }],
+        [{ text: 'Fees', data: UI_ACTIONS.SET_FEES }, { text: 'Context', data: UI_ACTIONS.SET_CONTEXT }],
+        [{ text: 'Image', data: UI_ACTIONS.SET_IMAGE }, { text: spoofLabel, data: UI_ACTIONS.SET_SPOOF }],
+        [{ text: 'Fallback', data: UI_ACTIONS.FALLBACK }, { text: 'Main Panel', data: UI_ACTIONS.MENU }]
+    ];
+};
+
+const getFallbackButtons = () => [
+    [{ text: 'Auto-fill Missing', data: UI_ACTIONS.FB_AUTOFILL }, { text: 'Clear Image', data: UI_ACTIONS.FB_CLEAR_IMAGE }],
+    [{ text: 'Clear Context', data: UI_ACTIONS.FB_CLEAR_CONTEXT }, { text: 'Clear Socials', data: UI_ACTIONS.FB_CLEAR_SOCIALS }],
+    [{ text: 'Reset Session', data: UI_ACTIONS.CANCEL }, { text: 'Settings', data: UI_ACTIONS.SETTINGS }]
+];
+
+const sendWizardImagePrompt = async (chatId) => {
+    return await sendButtons(chatId, `
+Step 3.5/4: Token Image
+Send image as photo, image URL, or IPFS CID.
+If no image, choose Skip Image.
+    `.trim(), [
+        [{ text: 'Skip Image', data: UI_ACTIONS.WIZ_SKIP_IMAGE }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+    ]);
+};
+
+const sendWizardContextPrompt = async (chatId) => {
+    return await sendButtons(chatId, `
+Step 4/4: Context Link
+Send source link for indexing quality.
+If no context, choose Skip Context.
+    `.trim(), [
+        [{ text: 'Skip Context', data: UI_ACTIONS.WIZ_SKIP_CONTEXT }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+    ]);
+};
+
+const applySessionFallbacks = (session) => {
+    const draft = createConfigFromSession(session.token, ZERO_ADDRESS);
+    const validated = validateConfig(draft);
+
+    session.token.name = validated.name;
+    session.token.symbol = validated.symbol;
+    session.token.image = validated.image;
+    session.token.context = validated.context;
+    if (validated.metadata?.description && !String(session.token.description || '').trim()) {
+        session.token.description = validated.metadata.description;
+    }
+    if (validated.fees?.type === 'static') {
+        session.token.fees = {
+            clankerFee: Number(validated.fees.clankerFee),
+            pairedFee: Number(validated.fees.pairedFee)
+        };
+    }
+};
+
+const renderFieldValue = (value, notSet = '_not set_') => {
+    if (value === undefined || value === null) return notSet;
+    const raw = String(value);
+    if (raw.length === 0) return '`(empty)`';
+    if (!raw.trim()) return '`(spaces)`';
+    return raw;
+};
+
+const formatSessionPanel = (session, title = '*Session Panel*') => {
+    const t = session.token;
+    const status = getReadyStatus(t);
+    const totalFee = Number(t?.fees?.clankerFee || 0) + Number(t?.fees?.pairedFee || 0);
+    const imageStatus = t.image ? 'Set' : 'Not set';
+    const contextStatus = t.context?.messageId
+        ? `${String(t.context.platform || 'unknown').toUpperCase()}`
+        : 'Not set';
+    const socialCount = Object.keys(t.socials || {}).length;
+    const spoofStatus = t.spoofTo ? `ON (${t.spoofTo.slice(0, 8)}...)` : 'OFF';
+
+    return {
+        text: `
+${title}
+━━━━━━━━━━━━━━━━━━━━━
+*Name:* ${renderFieldValue(t.name)}
+*Symbol:* ${renderFieldValue(t.symbol)}
+*Fees:* ${(totalFee / 100).toFixed(2)}% (${t?.fees?.clankerFee || 0}/${t?.fees?.pairedFee || 0} bps)
+*Context:* ${contextStatus}
+*Image:* ${imageStatus}
+*Socials:* ${socialCount}
+*Spoof:* ${spoofStatus}
+
+${status.ready ? 'Ready to deploy' : 'Configure fields using buttons below'}
+`.trim(),
+        buttons: getPanelButtons(t, status.ready)
+    };
+};
+
+const showControlPanel = async (chatId, session, title) => {
+    const panel = formatSessionPanel(session, title);
+    return await sendButtons(chatId, panel.text, panel.buttons);
+};
+
+const showSettingsPanel = async (chatId, session, title = '*Settings Panel*') => {
+    const t = session.token;
+    const feePercent = ((Number(t?.fees?.clankerFee || 0) + Number(t?.fees?.pairedFee || 0)) / 100).toFixed(2);
+    return await sendButtons(chatId, `
+${title}
+━━━━━━━━━━━━━━━━━━━━━
+Configure token fields using buttons below.
+
+Name: ${renderFieldValue(t.name, 'Not set')}
+Symbol: ${renderFieldValue(t.symbol, 'Not set')}
+Fees: ${feePercent}%
+Context: ${t.context?.messageId ? 'Set' : 'Not set'}
+Image: ${t.image ? 'Set' : 'Not set'}
+Spoof: ${t.spoofTo ? 'On' : 'Off'}
+    `.trim(), getSettingsButtons(t));
+};
+
+const showFallbackPanel = async (chatId, session) => {
+    return await sendButtons(chatId, `
+*Fallback Tools*
+━━━━━━━━━━━━━━━━━━━━━
+Use these actions to auto-heal or clean the current config.
+    `.trim(), getFallbackButtons());
 };
 
 // ═══════════════════════════════════════════
@@ -546,78 +758,57 @@ const getReadyStatus = (token) => {
 const handleStart = async (chatId, username) => {
     const pkCheck = validatePrivateKey();
     const providers = getProviderStatus();
+    const session = getSession(chatId);
 
     // Status Logic
-    const walletStatus = pkCheck.valid ? '✅ Active' : '❌ Missing Key';
-    const storageStatus = providers.any ? '✅ Active' : '⚠️ Limited';
+    const walletStatus = pkCheck.valid ? 'Active' : 'Missing Key';
+    const storageStatus = providers.any ? 'Active' : 'Limited';
 
     await sendMessage(chatId, `
-🤖 *System Online: Clank & Claw v2.7.0*
+*Clank & Claw v2.7.0*
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-👤 *Operator:* @${username || 'Agent'}
-🔐 *Wallet:* ${walletStatus}
-📦 *Storage:* ${storageStatus}
+*Operator:* @${username || 'Agent'}
+*Wallet:* ${walletStatus}
+*Storage:* ${storageStatus}
 
-🛠️ *Deployment Controls*
-• */deploy* - Start Wizard
-• */go* <SYMBOL> "<NAME>" <FEES> - Rapid Fire
-• */spoof* <ADDRESS> - Toggle Stealth Mode
+*Deployment Controls*
+• */a* - Open action panel
+• */deploy* - Start guided wizard
+• */go* <SYMBOL> "<NAME>" <FEES> - Quick setup
+• */spoof* <ADDRESS> - Set spoof target
 
-💡 *Pro Tip:*
-You can paste any source link to set context (X/Farcaster/GitHub/Website/etc), or drag & drop an image anytime.
+Use */a* for button-first workflow.
+Image uploads are accepted only from */a* -> *Settings* -> *Image*.
 
 _Ready for instructions._
     `.trim());
+
+    await showControlPanel(chatId, session, '*Control Panel*');
 };
 
 const handleHelp = async (chatId) => {
     await sendMessage(chatId, `
-📖 *Complete Guide*
+*Quick Guide*
 ━━━━━━━━━━━━━━━━━━━━━
 
-*🚀 Fastest Method:*
-\`/go SYMBOL "Name" FEES\`
-Example: \`/go DOGE "Moon Doge" 6%\`
+1. Open */a*.
+2. Use *Settings* to set name, symbol, fees, context, image.
+3. Use *Deploy* and confirm.
 
-*📝 Step-by-Step:*
-1. \`/deploy\` → Start wizard
-2. Enter name → Enter symbol → Set fees
-3. Send image (auto IPFS upload)
-4. Send source link → Confirm → Done!
-
-*💬 Natural Language:*
-Just type: _"Launch PEPE (Pepe Token) 6%"_
-Bot auto-detects name, symbol, fees!
-
-*🎭 Spoofing Mode:*
-\`/spoof 0xRecipientAddress\` or \`/spoof off\`
-Rewards go to stealth wallet (or reset ke default).
-
-*💰 Fee Formats:*
-\`6%\` → 3%+3% split
-\`3% 3%\` → Explicit split  
-\`600bps\` → 600 basis points
-\`600\` → Total bps
-
-*📸 Images:*
-Send any image → Auto IPFS upload
-Or paste IPFS CID: \`bafkrei...\`
-
-*🔗 Context Links (Any Source):*
-\`https://x.com/user/status/123\`
-\`https://warpcast.com/user/0xabc\`
-\`https://github.com/org/repo\`
-
-*⚙️ Commands:*
-\`/go\` - Fast deploy
-\`/deploy\` - Wizard mode
-\`/status\` - Wallet info
-\`/health\` - Full system check
-\`/config\` - View config
-\`/spoof\` - Set stealth address
-\`/cancel\` - Reset session
+*Commands*
+\`/a\` open action panel
+\`/deploy\` guided wizard
+\`/go SYMBOL "Name" FEES\` quick setup
+\`/spoof 0x...\` enable spoof
+\`/spoof off\` disable spoof
+\`/status\` wallet status
+\`/health\` system health
+\`/cancel\` reset session
     `.trim());
+
+    const session = getSession(chatId);
+    await showControlPanel(chatId, session, '*Control Panel*');
 };
 
 const handleStatus = async (chatId) => {
@@ -642,17 +833,17 @@ const handleStatus = async (chatId) => {
         const balance = await client.getBalance({ address: account.address });
         const eth = parseFloat(formatEther(balance));
 
-        const balanceEmoji = eth > 0.1 ? '🟢' : eth > 0.01 ? '🟡' : '🔴';
-        const balanceWarning = eth < 0.01 ? '\n⚠️ _Low balance for deployment!_' : '';
+        const balanceLevel = eth > 0.1 ? 'Healthy' : eth > 0.01 ? 'Low' : 'Critical';
+        const balanceWarning = eth < 0.01 ? '\nWarning: low balance for deployment.' : '';
 
         await sendMessage(chatId, `
-💰 *Wallet Status*
+*Wallet Status*
 ━━━━━━━━━━━━━━━━━━━━━
 
-📍 Address: \`${account.address}\`
-${balanceEmoji} Balance: *${eth.toFixed(4)} ETH*
-🔗 Network: Base Mainnet
-🌐 RPC: \`${rpcUrl}\`
+Address: \`${account.address}\`
+Balance: *${eth.toFixed(4)} ETH* (${balanceLevel})
+Network: Base Mainnet
+RPC: \`${rpcUrl}\`
 ${balanceWarning}
         `.trim());
     } catch (error) {
@@ -663,7 +854,7 @@ ${balanceWarning}
 const handleHealth = async (chatId) => {
     await sendTyping(chatId);
 
-    const progress = await sendMessage(chatId, '🩺 Running deep health check...\nChecking Telegram API, RPC, wallet, and IPFS.');
+    const progress = await sendMessage(chatId, 'Running health check...\nChecking Telegram API, RPC, wallet, and IPFS.');
 
     try {
         const pkCheck = validatePrivateKey();
@@ -698,15 +889,15 @@ const handleHealth = async (chatId) => {
             : `• ❌ \`${item.rpcUrl}\` (${item.latencyMs}ms) _${item.error}_`);
 
         const summary = [
-            `🔐 Wallet: ${pkCheck.valid ? '✅ Ready' : `❌ ${pkCheck.error}`}`,
-            `📦 IPFS: ${ipfsStatus.any ? `✅ ${ipfsProviders.join(', ')}` : '⚠️ Not configured'}`,
-            `🌐 Active Telegram Origin: \`${activeTelegramOrigin}\``,
-            `🔗 Preferred RPC: ${healthyRpc ? `\`${healthyRpc.rpcUrl}\`` : '_No healthy RPC_'}`,
-            `📍 Session Cache: ${sessionManager.count()} active chat(s)`
+            `Wallet: ${pkCheck.valid ? 'Ready' : pkCheck.error}`,
+            `IPFS: ${ipfsStatus.any ? ipfsProviders.join(', ') : 'Not configured'}`,
+            `Active Telegram Origin: \`${activeTelegramOrigin}\``,
+            `Preferred RPC: ${healthyRpc ? `\`${healthyRpc.rpcUrl}\`` : '_No healthy RPC_'}`,
+            `Session Cache: ${sessionManager.count()} active chat(s)`
         ].join('\n');
 
         const resultMessage = `
-🩺 *System Health*
+*System Health*
 ━━━━━━━━━━━━━━━━━━━━━
 
 ${summary}
@@ -726,22 +917,7 @@ ${rpcLines.join('\n')}
 
 const handleConfig = async (chatId) => {
     const session = getSession(chatId);
-    const t = session.token;
-    const status = getReadyStatus(t);
-
-    await sendMessage(chatId, `
-⚙️ *Current Session Config*
-━━━━━━━━━━━━━━━━━━━━━
-
-${t.name ? `✅ Name: *${t.name}*` : '⬜ Name: _not set_'}
-${t.symbol ? `✅ Symbol: *${t.symbol}*` : '⬜ Symbol: _not set_'}
-${t.image ? `✅ Image: \`${t.image.substring(0, 20)}...\`` : '⬜ Image: _not set_'}
-${t.context?.messageId ? `✅ Context: *${t.context.platform}*` : '⬜ Context: _auto fallback_'}
-💰 Fees: *${(t.fees.clankerFee + t.fees.pairedFee) / 100}%*
-${t.spoofTo ? `🎭 Spoof: \`${t.spoofTo.substring(0, 10)}...\`` : ''}
-
-${status.ready ? '✅ *Ready to deploy!* Type \`/confirm\`' : `⏳ Missing: ${status.missing.join(', ')}`}
-    `.trim());
+    await showControlPanel(chatId, session, '*Current Session*');
 };
 
 const handleSpoof = async (chatId, address) => {
@@ -750,43 +926,25 @@ const handleSpoof = async (chatId, address) => {
 
     if (!target || SPOOF_DISABLE_KEYWORDS.has(target.toLowerCase())) {
         if (!session.token.spoofTo) {
-            return await sendMessage(chatId, '🎭 Spoofing sudah nonaktif.');
+            return await sendMessage(chatId, 'Spoof is already disabled.');
         }
 
         session.token.spoofTo = null;
-        return await sendMessage(chatId, `
-🎭 *Stealth Mode Deactivated*
-
-Rewards kembali ke wallet deployer default.
-
-Untuk aktifkan lagi:
-\`/spoof 0xYourStealthAddress\`
-        `.trim());
+        return await sendMessage(chatId, 'Spoof disabled. Rewards now route to the deployer wallet.');
     }
 
     if (!isEthereumAddress(target)) {
         return await sendMessage(chatId, `
-🎭 *Spoofing Mode*
+*Spoof Mode*
 ━━━━━━━━━━━━━━━━━━━━━
-
-Redirect all rewards to a stealth wallet.
-
-*Usage:* \`/spoof 0xYourStealthAddress\`
-*Disable:* \`/spoof off\`
-
+Usage: \`/spoof 0xYourStealthAddress\`
+Disable: \`/spoof off\`
 Current: ${session.token.spoofTo ? `\`${session.token.spoofTo}\`` : '_None_'}
         `.trim());
     }
 
     session.token.spoofTo = target;
-    await sendMessage(chatId, `
-🎭 *Stealth Mode Activated*
-
-All rewards will be sent to:
-\`${target}\`
-
-This address will appear as token admin on-chain.
-    `.trim());
+    await sendMessage(chatId, `Spoof enabled: \`${target}\``);
 };
 
 const handleGo = async (chatId, args) => {
@@ -810,43 +968,37 @@ const handleGo = async (chatId, args) => {
 
     const status = getReadyStatus(session.token);
 
-    if (!session.token.symbol) {
-        return await sendMessage(chatId, `
-❌ *Could not parse symbol*
-
-*Format:* \`/go SYMBOL "Name" FEES\`
-*Example:* \`/go PEPE "Pepe Token" 6%\`
-
-Tips:
-• Symbol must be UPPERCASE
-• Name in quotes or parentheses
-• Fees: 6%, 600bps, or 3% 3%
-        `.trim());
+    if (!session.token.symbol && !session.token.name && String(args || '').trim()) {
+        session.token.name = String(args || '');
     }
 
     // Use symbol as name if not provided
-    if (!session.token.name) {
+    if (!session.token.name && session.token.symbol) {
         session.token.name = session.token.symbol;
     }
 
     session.state = 'collecting';
 
     const totalFee = (session.token.fees.clankerFee + session.token.fees.pairedFee) / 100;
+    const displayName = renderFieldValue(session.token.name);
+    const displaySymbol = renderFieldValue(session.token.symbol);
 
     await sendMessage(chatId, `
-✅ *Token Configured*
+*Token Configured*
 ━━━━━━━━━━━━━━━━━━━━━
 
-📛 *${session.token.name}* (${session.token.symbol})
-💰 Fees: *${totalFee}%*
-${session.token.context ? `🔗 Context: ${session.token.context.platform}` : ''}
-${session.token.spoofTo ? `🎭 Spoof: Active` : ''}
+${displayName} (${displaySymbol})
+Fees: *${totalFee}%*
+${session.token.context ? `Context: ${session.token.context.platform}` : ''}
+${session.token.spoofTo ? `Spoof: Active` : ''}
 
 *Next Steps:*
-${!session.token.image ? '1️⃣ (Opsional) Send token *image*' : ''}
-${!session.token.context ? '2️⃣ (Disarankan) Send *source link* (X/Farcaster/GitHub/Website/etc)' : ''}
-${status.ready ? '\n✅ Ready! Type \`yes\` to deploy' : ''}
+${!session.token.image ? '1. (Optional) Set token *image* in *Settings*.' : ''}
+${!session.token.context ? '2. (Recommended) Set *source link* context in *Settings*.' : ''}
+${status.ready ? '\nReady to deploy. Use the *Deploy* button.' : ''}
     `.trim());
+
+    await showControlPanel(chatId, session, '*Current Session*');
 
     if (status.ready) {
         session.state = 'confirming';
@@ -858,8 +1010,8 @@ const handleDeploy = async (chatId) => {
     session.state = 'wizard_name';
     session.createdAt = Date.now();
 
-    await sendMessage(chatId, `
-🚀 *Token Deployment Wizard*
+    await sendButtons(chatId, `
+*Token Deployment Wizard*
 ━━━━━━━━━━━━━━━━━━━━━
 
 *Step 1/4: Token Name*
@@ -867,13 +1019,180 @@ What should the token be called?
 
 _Example: Pepe Token_
 
-(Type /cancel to abort)
-    `.trim());
+    `.trim(), [
+        [{ text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+    ]);
 };
 
 const handleCancel = async (chatId) => {
     resetSession(chatId);
-    await sendMessage(chatId, '❌ Session cancelled. Start fresh with /go or /deploy');
+    const session = getSession(chatId);
+    await sendMessage(chatId, 'Session cancelled. Start fresh with /go, /deploy, or /a.');
+    await showControlPanel(chatId, session, '*Control Panel*');
+};
+
+const handleMenuAction = async (chatId, data) => {
+    const session = getSession(chatId);
+    const status = getReadyStatus(session.token);
+
+    switch (data) {
+        case UI_ACTIONS.MENU:
+            return await showControlPanel(chatId, session, '*Control Panel*');
+
+        case UI_ACTIONS.SETTINGS:
+            return await showSettingsPanel(chatId, session);
+
+        case UI_ACTIONS.FALLBACK:
+            return await showFallbackPanel(chatId, session);
+
+        case UI_ACTIONS.WIZARD:
+            return await handleDeploy(chatId);
+
+        case UI_ACTIONS.SET_NAME:
+            session.state = 'menu_name';
+            return await sendButtons(chatId, 'Send token *name* (any text).', [
+                [{ text: 'Back', data: UI_ACTIONS.SETTINGS }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+            ]);
+
+        case UI_ACTIONS.SET_SYMBOL:
+            session.state = 'menu_symbol';
+            return await sendButtons(chatId, 'Send token *symbol* (any text, can be empty/spaces).', [
+                [{ text: 'Back', data: UI_ACTIONS.SETTINGS }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+            ]);
+
+        case UI_ACTIONS.SET_FEES:
+            session.state = 'menu_fees';
+            return await sendButtons(chatId, `
+*Set Fees*
+Choose preset or send custom fee text:
+\`6%\`, \`600bps\`, or \`3% 3%\`
+            `.trim(), [
+                [{ text: 'Use 6% (3%+3%)', data: UI_ACTIONS.FEE_PRESET_6 }, { text: 'Use 5% (2.5%+2.5%)', data: UI_ACTIONS.FEE_PRESET_5 }],
+                [{ text: 'Back', data: UI_ACTIONS.SETTINGS }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+            ]);
+
+        case UI_ACTIONS.FEE_PRESET_6:
+            session.token.fees = { ...DEFAULT_FEES };
+            session.state = 'collecting';
+            await sendMessage(chatId, 'Fees set to *6.00%* (3% + 3%).');
+            return await showSettingsPanel(chatId, session);
+
+        case UI_ACTIONS.FEE_PRESET_5:
+            session.token.fees = { clankerFee: 250, pairedFee: 250 };
+            session.state = 'collecting';
+            await sendMessage(chatId, 'Fees set to *5.00%* (2.5% + 2.5%).');
+            return await showSettingsPanel(chatId, session);
+
+        case UI_ACTIONS.SET_CONTEXT:
+            session.state = 'menu_context';
+            return await sendButtons(chatId, 'Send source link for context (X/Farcaster/GitHub/Website/etc).', [
+                [{ text: 'Back', data: UI_ACTIONS.SETTINGS }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+            ]);
+
+        case UI_ACTIONS.SET_IMAGE:
+            session.state = 'menu_image';
+            return await sendButtons(chatId, 'Send image as photo, image URL, or IPFS CID.', [
+                [{ text: 'Back', data: UI_ACTIONS.SETTINGS }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+            ]);
+
+        case UI_ACTIONS.SET_SPOOF:
+            session.state = 'menu_spoof';
+            return await sendButtons(chatId, 'Send spoof address (`0x...`) or `off` to disable.', [
+                [{ text: 'Back', data: UI_ACTIONS.SETTINGS }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+            ]);
+
+        case UI_ACTIONS.FB_AUTOFILL:
+            try {
+                applySessionFallbacks(session);
+                await sendMessage(chatId, 'Fallback auto-fill applied to current config.');
+            } catch (e) {
+                await sendMessage(chatId, `Fallback failed: ${e.message}`);
+            }
+            return await showFallbackPanel(chatId, session);
+
+        case UI_ACTIONS.FB_CLEAR_IMAGE:
+            session.token.image = null;
+            session.state = 'collecting';
+            await sendMessage(chatId, 'Image cleared.');
+            return await showFallbackPanel(chatId, session);
+
+        case UI_ACTIONS.FB_CLEAR_CONTEXT:
+            session.token.context = null;
+            session.state = 'collecting';
+            await sendMessage(chatId, 'Context cleared.');
+            return await showFallbackPanel(chatId, session);
+
+        case UI_ACTIONS.FB_CLEAR_SOCIALS:
+            session.token.socials = {};
+            session.state = 'collecting';
+            await sendMessage(chatId, 'Social links cleared.');
+            return await showFallbackPanel(chatId, session);
+
+        case UI_ACTIONS.WIZ_FEE_6:
+            if (session.state !== 'wizard_fees') {
+                return await showControlPanel(chatId, session, '*Control Panel*');
+            }
+            session.token.fees = { ...DEFAULT_FEES };
+            session.state = 'wizard_image';
+            return await sendWizardImagePrompt(chatId);
+
+        case UI_ACTIONS.WIZ_FEE_5:
+            if (session.state !== 'wizard_fees') {
+                return await showControlPanel(chatId, session, '*Control Panel*');
+            }
+            session.token.fees = { clankerFee: 250, pairedFee: 250 };
+            session.state = 'wizard_image';
+            return await sendWizardImagePrompt(chatId);
+
+        case UI_ACTIONS.WIZ_SKIP_IMAGE:
+            if (session.state !== 'wizard_image') {
+                return await showControlPanel(chatId, session, '*Control Panel*');
+            }
+            session.state = 'wizard_context';
+            return await sendWizardContextPrompt(chatId);
+
+        case UI_ACTIONS.WIZ_SKIP_CONTEXT:
+            if (session.state !== 'wizard_context') {
+                return await showControlPanel(chatId, session, '*Control Panel*');
+            }
+            session.state = 'collecting';
+            return await checkAndPrompt(chatId, session);
+
+        case UI_ACTIONS.STATUS:
+            return await handleStatus(chatId);
+
+        case UI_ACTIONS.HEALTH:
+            return await handleHealth(chatId);
+
+        case UI_ACTIONS.HELP:
+            return await handleHelp(chatId);
+
+        case UI_ACTIONS.CANCEL:
+            return await handleCancel(chatId);
+
+        case UI_ACTIONS.DEPLOY:
+            if (!status.ready) {
+                await sendMessage(chatId, 'Token config is not ready yet. Complete fields first.');
+                return await showControlPanel(chatId, session, '*Current Session*');
+            }
+            const deployName = renderFieldValue(session.token.name);
+            const deploySymbol = renderFieldValue(session.token.symbol);
+            session.state = 'confirming';
+            return await sendButtons(chatId, `
+*Confirm Deployment*
+━━━━━━━━━━━━━━━━━━━━━
+Token: ${deployName} (${deploySymbol})
+Fees: *${((session.token.fees.clankerFee + session.token.fees.pairedFee) / 100).toFixed(2)}%*
+
+Proceed to deploy now?
+            `.trim(), [
+                [{ text: 'Confirm Deploy', data: 'confirm_deploy' }, { text: 'Cancel', data: 'cancel_deploy' }],
+                [{ text: 'Main Panel', data: UI_ACTIONS.MENU }]
+            ]);
+
+        default:
+            return await sendMessage(chatId, 'Unknown action. Type /a to reopen panel.');
+    }
 };
 
 // ═══════════════════════════════════════════
@@ -890,8 +1209,106 @@ const processMessage = async (chatId, text, session) => {
         }
         if (['no', 'n', 'cancel', '/cancel'].includes(lowerText)) {
             resetSession(chatId);
-            return await sendMessage(chatId, '❌ Cancelled.');
+            const freshSession = getSession(chatId);
+            await sendMessage(chatId, 'Cancelled.');
+            return await showControlPanel(chatId, freshSession, '*Control Panel*');
         }
+    }
+
+    // Targeted panel input states (button-driven flow)
+    if (session.state === 'menu_name') {
+        session.token.name = String(text || '');
+        session.state = 'collecting';
+        await sendMessage(chatId, `Name set: ${renderFieldValue(session.token.name, '`(empty)`')}`);
+        return await showSettingsPanel(chatId, session);
+    }
+
+    if (session.state === 'menu_symbol') {
+        session.token.symbol = String(text || '');
+        if (!session.token.name) session.token.name = session.token.symbol;
+        session.state = 'collecting';
+        await sendMessage(chatId, `Symbol set: ${renderFieldValue(session.token.symbol, '`(empty)`')}`);
+        return await showSettingsPanel(chatId, session);
+    }
+
+    if (session.state === 'menu_fees') {
+        const fees = parseFees(text);
+        if (!fees) return await sendMessage(chatId, 'Invalid fee format. Try `6%`, `600bps`, or `3% 3%`.');
+        session.token.fees = fees;
+        session.state = 'collecting';
+        await sendMessage(chatId, `Fees set: *${((fees.clankerFee + fees.pairedFee) / 100).toFixed(2)}%*`);
+        return await showSettingsPanel(chatId, session);
+    }
+
+    if (session.state === 'menu_context') {
+        const { context, socials } = parseSmartSocialInput(text);
+        if (!context) return await sendMessage(chatId, 'Context link not detected. Send a valid URL.');
+        session.token.context = context;
+        if (Object.keys(socials).length > 0) {
+            session.token.socials = { ...session.token.socials, ...socials };
+        }
+        session.state = 'collecting';
+        await sendMessage(chatId, `Context set: *${context.platform}* (${context.messageId})`);
+        return await showSettingsPanel(chatId, session);
+    }
+
+    if (session.state === 'menu_image') {
+        const trimmed = text.trim();
+        if (isIPFSCid(trimmed)) {
+            session.token.image = trimmed.replace('ipfs://', '');
+        } else if (/^https?:\/\//i.test(trimmed)) {
+            session.token.image = trimmed;
+        } else {
+            return await sendMessage(chatId, 'Send image as photo, HTTPS URL, or IPFS CID.');
+        }
+        session.state = 'collecting';
+        await sendMessage(chatId, 'Image reference updated.');
+        return await showSettingsPanel(chatId, session);
+    }
+
+    if (session.state === 'menu_spoof') {
+        const target = text.trim();
+        if (SPOOF_DISABLE_KEYWORDS.has(target.toLowerCase())) {
+            session.token.spoofTo = null;
+            session.state = 'collecting';
+            await sendMessage(chatId, 'Spoof disabled.');
+            return await showSettingsPanel(chatId, session);
+        }
+        if (!isEthereumAddress(target)) {
+            return await sendMessage(chatId, 'Invalid address. Send `0x...` or `off`.');
+        }
+        session.token.spoofTo = target;
+        session.state = 'collecting';
+        await sendMessage(chatId, `Spoof target set: \`${target}\``);
+        return await showSettingsPanel(chatId, session);
+    }
+
+    if (session.state === 'wizard_image') {
+        if (lowerText === '/skip' || lowerText === 'skip') {
+            session.state = 'wizard_context';
+            return await sendWizardContextPrompt(chatId);
+        }
+
+        const trimmed = text.trim();
+        if (isIPFSCid(trimmed)) {
+            session.token.image = trimmed.replace('ipfs://', '');
+            session.state = 'wizard_context';
+            await sendMessage(chatId, 'Image set.');
+            return await sendWizardContextPrompt(chatId);
+        }
+        if (/^https?:\/\//i.test(trimmed)) {
+            session.token.image = trimmed;
+            session.state = 'wizard_context';
+            await sendMessage(chatId, 'Image URL set.');
+            return await sendWizardContextPrompt(chatId);
+        }
+
+        return await sendMessage(chatId, 'Send image as photo, HTTPS URL, or IPFS CID. Use /skip to continue.');
+    }
+
+    if (session.state === 'wizard_context' && (lowerText === '/skip' || lowerText === 'skip')) {
+        session.state = 'collecting';
+        return await checkAndPrompt(chatId, session);
     }
 
     // Check for URL first (works in any state)
@@ -899,18 +1316,18 @@ const processMessage = async (chatId, text, session) => {
     const { context, socials } = parseSmartSocialInput(text);
 
     if (context || Object.keys(socials).length > 0) {
-        if (context) {
-            session.token.context = context;
-            await sendMessage(chatId, `✅ Context: *${context.platform}* (${context.messageId})`);
-        }
+            if (context) {
+                session.token.context = context;
+                await sendMessage(chatId, `Context set: *${context.platform}* (${context.messageId})`);
+            }
 
         if (Object.keys(socials).length > 0) {
             session.token.socials = { ...session.token.socials, ...socials };
-            const socialList = Object.entries(socials)
-                .map(([p, u]) => `• ${p}: ${u}`)
-                .join('\n');
-            await sendMessage(chatId, `✅ Socials added:\n${socialList}`);
-        }
+                const socialList = Object.entries(socials)
+                    .map(([p, u]) => `• ${p}: ${u}`)
+                    .join('\n');
+                await sendMessage(chatId, `Social links updated:\n${socialList}`);
+            }
 
         if (!context && Object.keys(socials).length > 0 && !session.token.context) {
             await sendMessage(chatId, `⚠️ Saved socials, but still need a *Context Link* (any source URL).`);
@@ -919,39 +1336,45 @@ const processMessage = async (chatId, text, session) => {
         return await checkAndPrompt(chatId, session);
     }
 
-    // Check for IPFS CID
+    // Reject CID outside image-input states to keep image flow explicit.
     if (isIPFSCid(text)) {
-        session.token.image = text.replace('ipfs://', '');
-        await sendMessage(chatId, `✅ Image CID set: \`${session.token.image.substring(0, 20)}...\``);
-        return await checkAndPrompt(chatId, session);
+        return await sendMessage(chatId, 'Image/CID input is allowed only after choosing `Settings` -> `Image` from `/a`.');
+    }
+
+    if (session.state === 'wizard_context') {
+        return await sendButtons(chatId, 'Send a valid source link, or choose Skip Context.', [
+            [{ text: 'Skip Context', data: UI_ACTIONS.WIZ_SKIP_CONTEXT }, { text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+        ]);
     }
 
     // Wizard state machine
     switch (session.state) {
         case 'wizard_name':
-            session.token.name = text.trim();
+            session.token.name = String(text || '');
             session.state = 'wizard_symbol';
-            return await sendMessage(chatId, `
-✅ Name: *${session.token.name}*
+            return await sendButtons(chatId, `
+Name: ${renderFieldValue(session.token.name, '`(empty)`')}
 
 *Step 2/4: Symbol*
 What's the ticker? (e.g., PEPE)
-            `.trim());
+            `.trim(), [
+                [{ text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+            ]);
 
         case 'wizard_symbol':
-            session.token.symbol = text.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-            if (!session.token.symbol) {
-                return await sendMessage(chatId, '❌ Invalid symbol. Use letters only.');
-            }
+            session.token.symbol = String(text || '');
             session.state = 'wizard_fees';
-            return await sendMessage(chatId, `
-✅ Symbol: *${session.token.symbol}*
+            return await sendButtons(chatId, `
+Symbol: ${renderFieldValue(session.token.symbol, '`(empty)`')}
 
 *Step 3/4: Fees*
-Enter total fee % (or /skip for 6%)
+Choose preset fees, or send custom fee text.
 
 _Examples: 6%, 600bps, 3% 3%_
-            `.trim());
+            `.trim(), [
+                [{ text: 'Use 6%', data: UI_ACTIONS.WIZ_FEE_6 }, { text: 'Use 5%', data: UI_ACTIONS.WIZ_FEE_5 }],
+                [{ text: 'Cancel', data: UI_ACTIONS.CANCEL }]
+            ]);
 
         case 'wizard_fees':
             if (lowerText === '/skip' || lowerText === 'skip') {
@@ -959,19 +1382,13 @@ _Examples: 6%, 600bps, 3% 3%_
             } else {
                 const fees = parseFees(text);
                 if (!fees) {
-                    return await sendMessage(chatId, '❌ Invalid. Try: `6%`, `600bps`, or `3% 3%`');
+                    return await sendMessage(chatId, 'Invalid format. Try: `6%`, `600bps`, or `3% 3%`');
                 }
                 session.token.fees = fees;
             }
-            session.state = 'collecting';
-            return await sendMessage(chatId, `
-✅ Fees: *${(session.token.fees.clankerFee + session.token.fees.pairedFee) / 100}%*
-
-    *Step 4/4: Image & Context (Recommended)*
-    Now send:
-1️⃣ Token *image* (will upload to IPFS)
-2️⃣ *Source link* for indexing quality (X/Farcaster/GitHub/Website/etc)
-            `.trim());
+            session.state = 'wizard_image';
+            await sendMessage(chatId, `Fees: *${(session.token.fees.clankerFee + session.token.fees.pairedFee) / 100}%*`);
+            return await sendWizardImagePrompt(chatId);
 
         case 'collecting':
         case 'idle':
@@ -988,19 +1405,20 @@ _Examples: 6%, 600bps, 3% 3%_
                 const totalFee = (session.token.fees?.clankerFee + session.token.fees?.pairedFee) / 100 || 6;
 
                 await sendMessage(chatId, `
-🎯 *Detected:* ${session.token.symbol} "${session.token.name || session.token.symbol}"
-💰 Fees: ${totalFee}%
+*Detected:* ${session.token.symbol} "${session.token.name || session.token.symbol}"
+Fees: ${totalFee}%
 
-Send image/context now, or deploy langsung dengan fallback smart logic.
+Continue in *Settings*, or deploy from the panel.
                 `.trim());
                 return;
             }
 
             // Unknown input -> Smart Fallback
-            return await handleFallback(chatId, text, session, {
+            await handleFallback(chatId, text, session, {
                 sendMessage,
                 resetSession
             });
+            return await showControlPanel(chatId, session, '*Control Panel*');
 
         default:
             return await checkAndPrompt(chatId, session);
@@ -1014,7 +1432,7 @@ const processPhoto = async (chatId, photo, session, preResolvedFileUrl = null) =
     const ipfsStatus = getProviderStatus();
     if (!ipfsStatus.any) {
         return await sendMessage(chatId, `
-❌ *IPFS not configured*
+*IPFS Not Configured*
 
 Add one of these to .env:
 • \`NFT_STORAGE_TOKEN=...\` (FREE at nft.storage)
@@ -1025,17 +1443,17 @@ Or paste an existing IPFS CID.
         `.trim());
     }
 
-    const statusMsg = await sendMessage(chatId, '📤 Uploading to IPFS...');
+    const statusMsg = await sendMessage(chatId, 'Uploading to IPFS...');
 
     // Get file URL
     const file = photo?.[photo.length - 1];
     if (!file?.file_id) {
-        return await editMessage(chatId, statusMsg?.result?.message_id, '❌ Invalid image payload. Try sending the image again.');
+        return await editMessage(chatId, statusMsg?.result?.message_id, 'Invalid image payload. Try sending the image again.');
     }
     const fileUrl = preResolvedFileUrl || await getFile(file.file_id);
 
     if (!fileUrl) {
-        return await editMessage(chatId, statusMsg?.result?.message_id, '❌ Could not download image. Try again.');
+        return await editMessage(chatId, statusMsg?.result?.message_id, 'Could not download image. Try again.');
     }
 
     // Upload to IPFS
@@ -1043,20 +1461,34 @@ Or paste an existing IPFS CID.
     try {
         result = await processImageInput(fileUrl);
     } catch (error) {
-        return await editMessage(chatId, statusMsg?.result?.message_id, `❌ Upload error: ${error.message}`);
+        return await editMessage(chatId, statusMsg?.result?.message_id, `Upload error: ${error.message}`);
     }
 
     if (!result.success) {
-        return await editMessage(chatId, statusMsg?.result?.message_id, `❌ Upload failed: ${result.error}`);
+        return await editMessage(chatId, statusMsg?.result?.message_id, `Upload failed: ${result.error}`);
     }
 
     session.token.image = result.cid;
+    const previousState = session.state;
+    if (session.state === 'menu_image') {
+        session.state = 'collecting';
+    } else if (session.state === 'wizard_image') {
+        session.state = 'wizard_context';
+    }
 
-    await editMessage(chatId, statusMsg?.result?.message_id, `✅ *Image uploaded!*\nCID: \`${result.cid}\``);
+    await editMessage(chatId, statusMsg?.result?.message_id, `*Image uploaded*\nCID: \`${result.cid}\``);
 
     // Set default fees if not set
     if (!session.token.fees) {
         session.token.fees = { ...DEFAULT_FEES };
+    }
+
+    if (previousState === 'wizard_image') {
+        return await sendWizardContextPrompt(chatId);
+    }
+
+    if (previousState === 'menu_image') {
+        return await showSettingsPanel(chatId, session);
     }
 
     await checkAndPrompt(chatId, session);
@@ -1068,41 +1500,44 @@ const checkAndPrompt = async (chatId, session) => {
     if (status.ready) {
         session.state = 'confirming';
         const t = session.token;
-        const displaySymbol = t.symbol || 'AUTO';
-        const displayName = t.name || `${displaySymbol} Token`;
+        const displaySymbol = renderFieldValue(t.symbol, 'AUTO');
+        const displayName = renderFieldValue(t.name, `${displaySymbol} Token`);
         const totalFee = (t.fees.clankerFee + t.fees.pairedFee) / 100;
         const socialCount = Object.keys(t.socials || {}).length;
         const contexts = t.socials ? Object.keys(t.socials).map(k => k.charAt(0).toUpperCase() + k.slice(1)).join(', ') : 'None';
 
-        await sendMessage(chatId, `
-🚀 *DEPLOYMENT DASHBOARD*
+        await sendButtons(chatId, `
+*Deployment Dashboard*
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-📋 *Token Information*
+*Token Information*
 • *Name:* ${displayName}
-• *Symbol:* $${displaySymbol}
+• *Symbol:* ${displaySymbol}
 • *Fees:* ${totalFee}% (${t.fees.clankerFee}/${t.fees.pairedFee} bps)
 
-🌍 *Deployment Context*
-• *Platform:* ${t.context?.platform ? t.context.platform.toUpperCase() : 'None'} ${t.context?.messageId ? '✅' : '❌'}
+*Deployment Context*
+• *Platform:* ${t.context?.platform ? t.context.platform.toUpperCase() : 'None'} (${t.context?.messageId ? 'set' : 'not set'})
 • *Socials:* ${socialCount > 0 ? `${socialCount} added (${contexts})` : 'None'}
 
-⚙️ *Settings*
-• *Image:* ${status.hasImage ? 'Uploaded ✅' : 'Auto fallback 🔁'}
-${t.spoofTo ? `• *Spoofing:* ACTIVE 🎭\n  Target: \`${t.spoofTo}\`` : '• *Spoofing:* Inactive'}
+*Settings*
+• *Image:* ${status.hasImage ? 'Set' : 'Auto fallback'}
+${t.spoofTo ? `• *Spoofing:* Active\n  Target: \`${t.spoofTo}\`` : '• *Spoofing:* Inactive'}
 
-👉 Type *"/confirm"* or *"yes"* to LAUNCH!
-   Type *"/cancel"* to abort.
-        `.trim());
+Type *"/confirm"* or *"yes"* to deploy.
+Type *"/cancel"* to abort.
+        `.trim(), [
+            [{ text: 'Confirm Deploy', data: 'confirm_deploy' }, { text: 'Cancel', data: 'cancel_deploy' }],
+            [{ text: 'Settings', data: UI_ACTIONS.SETTINGS }, { text: 'Main Panel', data: UI_ACTIONS.MENU }]
+        ]);
     } else if (status.missing.length > 0) {
         const prompts = [];
-        if (status.missing.includes('name_or_symbol')) prompts.push('📝 Need token *name* or *symbol*');
-        if (!status.hasImage) prompts.push('📷 (Opsional) Send token *image*');
-        if (!status.hasContext) prompts.push('🔗 (Disarankan) Send *source link* (X/Farcaster/GitHub/Website/etc)');
+        if (!status.hasImage) prompts.push('(Optional) set token *image*');
+        if (!status.hasContext) prompts.push('(Recommended) set *source link* context');
 
         if (prompts.length > 0) {
             await sendMessage(chatId, `*Next:* ${prompts.join(' or ')}`);
         }
+        await showControlPanel(chatId, session, '*Current Session*');
     }
 };
 
@@ -1182,7 +1617,12 @@ ${t.spoofTo ? '\n\n🎭 Rewards routed to stealth address.' : ''}
         await editMessage(chatId, statusMsg?.result?.message_id, `❌ *Error:* ${error.message}`);
     } finally {
         // Always reset session after attempt
-        resetSession(chatId);
+        const freshSession = resetSession(chatId);
+        try {
+            await showControlPanel(chatId, freshSession, '*Ready for Next Deployment*');
+        } catch (e) {
+            // Ignore panel send error after deployment attempt
+        }
     }
 };
 
@@ -1194,8 +1634,9 @@ const handleUpdate = async (update) => {
     // Handle callback queries (button presses)
     if (update.callback_query) {
         const { id, data, message } = update.callback_query;
-        const chatId = message.chat.id;
-        await apiCall('answerCallbackQuery', { callback_query_id: id });
+        await apiCall('answerCallbackQuery', { callback_query_id: id }).catch(() => { });
+        const chatId = message?.chat?.id;
+        if (!chatId) return;
 
         if (data === 'confirm_deploy') {
             const session = getSession(chatId);
@@ -1205,7 +1646,11 @@ const handleUpdate = async (update) => {
         if (data === 'cancel_deploy') {
             return await handleCancel(chatId);
         }
-        return;
+
+        if (Object.values(UI_ACTIONS).includes(data)) {
+            return await handleMenuAction(chatId, data);
+        }
+        return await sendMessage(chatId, 'Unknown button action. Type /a.');
     }
 
     const message = update.message;
@@ -1231,6 +1676,10 @@ const handleUpdate = async (update) => {
         switch (cmd) {
             case '/start': return handleStart(chatId, username);
             case '/help': return handleHelp(chatId);
+            case '/a':
+            case '/menu':
+            case '/panel':
+                return showControlPanel(chatId, session, '*Control Panel*');
             case '/status': return handleStatus(chatId);
             case '/health': return handleHealth(chatId);
             case '/config': return handleConfig(chatId);
@@ -1252,6 +1701,9 @@ const handleUpdate = async (update) => {
 
     // Handle photos
     if (message.photo) {
+        if (!canAcceptImageInput(session)) {
+            return await handleUnexpectedImageInput(chatId, message.message_id, session);
+        }
         return processPhoto(chatId, message.photo, session);
     }
 
@@ -1261,6 +1713,9 @@ const handleUpdate = async (update) => {
         || /\.(png|jpe?g|gif|webp|svg)$/i.test(String(message.document?.file_name || ''))
     );
     if (isImageDocument) {
+        if (!canAcceptImageInput(session)) {
+            return await handleUnexpectedImageInput(chatId, message.message_id, session);
+        }
         const fileUrl = await getFile(message.document.file_id);
         if (fileUrl) {
             return processPhoto(chatId, [{ file_id: message.document.file_id }], session, fileUrl);
@@ -1280,6 +1735,13 @@ let consecutiveConflicts = 0;
 const isGetUpdatesConflictError = (message) => {
     const normalized = String(message || '').toLowerCase();
     return normalized.includes('terminated by other getupdates request');
+};
+
+const isGetUpdatesAuthError = (message) => {
+    const normalized = String(message || '').toLowerCase();
+    return normalized.includes('unauthorized')
+        || normalized.includes('invalid bot token')
+        || normalized.includes('not found');
 };
 
 const poll = async () => {
@@ -1317,7 +1779,12 @@ const poll = async () => {
             if (consecutiveConflicts === 1 || consecutiveConflicts % 5 === 0) {
                 console.error('⚠️ Another bot instance is polling with the same token. Keep only one active instance.');
             }
+            if (consecutiveConflicts >= TELEGRAM_MAX_CONFLICT_ERRORS) {
+                return fatalPollingExit(`conflict persisted ${consecutiveConflicts} times`);
+            }
             await sleep(delay);
+        } else if (isGetUpdatesAuthError(error?.message)) {
+            return fatalPollingExit(error.message);
         } else {
             consecutiveErrors++;
             console.error(`Poll error (${consecutiveErrors}):`, error.message);

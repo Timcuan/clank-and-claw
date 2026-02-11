@@ -21,11 +21,11 @@ const baseConfig = () => ({
     metadata: { socialMediaUrls: [{ platform: 'x', url: 'https://x.com/alpha' }], auditUrls: [] }
 });
 
-test('validateConfig normalizes symbol to uppercase', () => {
+test('validateConfig keeps symbol text as provided', () => {
     const config = baseConfig();
-    config.symbol = 'alpHa1';
+    config.symbol = 'alpHa1-_@#';
     const validated = validateConfig(config);
-    assert.equal(validated.symbol, 'ALPHA1');
+    assert.equal(validated.symbol, 'alpHa1-_@#');
 });
 
 test('validateConfig auto-normalizes malformed social URL', () => {
@@ -371,6 +371,23 @@ test('validateConfig auto-fills missing name/symbol/image in smart mode', () => 
     assert.equal(validated.name.length >= 2, true);
     assert.equal(validated.symbol.length >= 2, true);
     assert.equal(/^https?:\/\//.test(validated.image), true);
+});
+
+test('validateConfig accepts whitespace-only name/symbol and auto-fills fallback', () => {
+    const config = baseConfig();
+    config.name = '   ';
+    config.symbol = '   ';
+    const validated = validateConfig(config);
+
+    assert.equal(validated.name.length > 0, true);
+    assert.equal(validated.symbol.length > 0, true);
+});
+
+test('validateConfig does not truncate long metadata description', () => {
+    const config = baseConfig();
+    config.metadata.description = 'x'.repeat(6000);
+    const validated = validateConfig(config);
+    assert.equal(validated.metadata.description.length, 6000);
 });
 
 test('validateConfig does not auto-correct when _meta.smartValidation is false', () => {

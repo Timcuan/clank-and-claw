@@ -179,6 +179,13 @@ set -euo pipefail
 EOF
 chmod +x ~/claw-update.sh
 
+cat > ~/claw-doctor.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+~/clawctl doctor "$@"
+EOF
+chmod +x ~/claw-doctor.sh
+
 cat > ~/claw-uninstall.sh << 'EOF'
 #!/bin/bash
 set -euo pipefail
@@ -318,8 +325,10 @@ echo "📁 Project: ~/clank-and-claw"
 echo ""
 echo "🚀 Quick Commands:"
 echo "   ~/clawctl wizard               # All-in-one install/update/uninstall wizard"
+echo "   ~/clawctl doctor               # Preflight check (token/key/rpc/ipfs/pm2)"
 echo "   ~/clawctl telegram-setup       # Setup + validate Telegram token"
 echo "   ~/claw-update.sh               # Safe update: git + npm + tests + restart"
+echo "   ~/claw-doctor.sh               # Shortcut doctor check"
 echo "   ~/claw-uninstall.sh            # Clean uninstall (with backup)"
 echo "   ~/deploy-token.sh              # Deploy from .env"
 echo "   ~/openclaw.sh --file input.json # Deploy from JSON"

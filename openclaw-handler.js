@@ -189,8 +189,8 @@ const validateInput = (input) => {
     const fallbackImage = String(process.env.DEFAULT_IMAGE_URL || '').trim()
         || 'https://gateway.pinata.cloud/ipfs/bafkreib5h4mmqsgmm7at7wphdfy66oh4yfcqo6dz64olhwv3nejq5ysycm';
     const deriveSymbol = (value) => {
-        const normalized = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-        if (normalized.length >= 2) return normalized.slice(0, 15);
+        const normalized = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '').trim();
+        if (normalized.length >= 2) return normalized;
         if (normalized.length === 1) return `${normalized}X`;
         return 'CLAW';
     };
@@ -199,13 +199,13 @@ const validateInput = (input) => {
     const symbol = pick(input, ['symbol', 'TOKEN_SYMBOL', 'tokenSymbol']);
     const image = pick(input, ['image', 'TOKEN_IMAGE', 'tokenImage']);
 
-    if (!name && !symbol) {
+    if (!String(name || '').trim() && !String(symbol || '').trim()) {
         if (!smartMode) throw new Error('Missing required field: name or symbol');
         input.name = 'Clank Token';
         input.symbol = 'CLAW';
     } else {
-        if (!name) input.name = String(symbol).trim();
-        if (!symbol) input.symbol = deriveSymbol(name);
+        if (!String(name || '').trim()) input.name = String(symbol || '');
+        if (!String(symbol || '').trim()) input.symbol = deriveSymbol(name);
     }
     if (!image && smartMode) input.image = fallbackImage;
     if (!image && !smartMode) throw new Error('Missing required field: image');

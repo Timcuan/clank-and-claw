@@ -114,6 +114,7 @@ npm run test:hardening
 
 - `/deploy` start guided wizard
 - `/go <SYMBOL> "<NAME>" <FEES>` fast setup
+- `/menu` open inline button control panel (quick actions + session editing)
 - `/spoof <ADDRESS>` enable stealth split
 - `/spoof off` disable spoofing
 - `/status` runtime status

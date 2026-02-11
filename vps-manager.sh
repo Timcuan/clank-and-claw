@@ -28,6 +28,7 @@ Usage:
   bash vps-manager.sh wizard
   bash vps-manager.sh install
   bash vps-manager.sh update [--force]
+  bash vps-manager.sh doctor
   bash vps-manager.sh start
   bash vps-manager.sh telegram-setup
   bash vps-manager.sh stop
@@ -38,7 +39,7 @@ Usage:
   bash vps-manager.sh heal
   bash vps-manager.sh backup
   bash vps-manager.sh restore <backup.tar.gz>
-  bash vps-manager.sh uninstall [--yes]
+  bash vps-manager.sh uninstall [--yes] [--force]
 EOF
 }
 
@@ -79,6 +80,19 @@ telegram_token() {
         return 0
     fi
     grep -E '^TELEGRAM_BOT_TOKEN=' "$env_file" | tail -n1 | cut -d= -f2- | tr -d '\r'
+}
+
+is_valid_private_key() {
+    local pk="$1"
+    [[ "$pk" =~ ^(0x)?[a-fA-F0-9]{64}$ ]]
+}
+
+check_rpc_endpoint() {
+    local rpc_url="$1"
+    curl -fsS --max-time 10 \
+        -H 'content-type: application/json' \
+        -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+        "$rpc_url" >/dev/null 2>&1
 }
 
 ensure_env_file() {
@@ -310,6 +324,28 @@ stop_direct_bot_processes() {
     fi
 }
 
+stop_non_pm2_bot_processes() {
+    local pm2_pid="${1:-}"
+    local pids pid stopped=0
+    pids="$(direct_bot_pids)"
+    if [ -z "$pids" ]; then
+        return 0
+    fi
+    for pid in $pids; do
+        if [ -n "$pm2_pid" ] && [ "$pid" = "$pm2_pid" ]; then
+            continue
+        fi
+        if kill -0 "$pid" >/dev/null 2>&1; then
+            warn "Menghentikan proses bot non-PM2 PID $pid"
+            kill "$pid" >/dev/null 2>&1 || true
+            stopped=1
+        fi
+    done
+    if [ "$stopped" -eq 1 ]; then
+        sleep 1
+    fi
+}
+
 start_bot() {
     require_project
     cd "$PROJECT_DIR"
@@ -350,8 +386,18 @@ start_bot() {
 
     cleanup_stale_locks
     clear_telegram_webhook
+    mkdir -p "$PROJECT_DIR/logs"
 
     if pm2_exists; then
+        local pm2_pid=""
+        if pm2_app_exists; then
+            pm2_pid="$(pm2 pid "$APP_NAME" 2>/dev/null | tr -d '[:space:]' || true)"
+            if [ "$pm2_pid" = "0" ]; then
+                pm2_pid=""
+            fi
+        fi
+        stop_non_pm2_bot_processes "$pm2_pid"
+
         if pm2_app_exists; then
             pm2 restart "$APP_NAME" --update-env
         else
@@ -364,7 +410,7 @@ start_bot() {
     fi
 
     warn "PM2 tidak terpasang, fallback ke nohup direct process"
-    mkdir -p "$PROJECT_DIR/logs"
+    stop_non_pm2_bot_processes
     nohup node telegram-bot.js > "$PROJECT_DIR/logs/direct-bot.log" 2>&1 &
     ok "Bot started (fallback mode). Log: $PROJECT_DIR/logs/direct-bot.log"
 }
@@ -441,6 +487,123 @@ run_netcheck() {
         -d '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
         https://mainnet.base.org >/dev/null 2>&1; then ok "Base RPC"; else err "Base RPC"; fi
     if curl -fsS --max-time 10 https://gateway.pinata.cloud/ipfs >/dev/null 2>&1; then ok "IPFS gateway"; else warn "IPFS gateway"; fi
+}
+
+do_doctor() {
+    require_project
+    cd "$PROJECT_DIR"
+    ensure_env_file
+
+    local failed=0
+    local warned=0
+
+    echo ""
+    echo "===== CLANK & CLAW DOCTOR ====="
+    echo "Project: $PROJECT_DIR"
+
+    if have_cmd node; then ok "Node: $(node -v)"; else err "Node tidak terpasang"; failed=$((failed + 1)); fi
+    if have_cmd npm; then ok "NPM: $(npm -v)"; else err "NPM tidak terpasang"; failed=$((failed + 1)); fi
+    if pm2_exists; then ok "PM2 tersedia"; else warn "PM2 tidak terpasang (fallback mode)"; warned=$((warned + 1)); fi
+
+    local token
+    token="$(telegram_token || true)"
+    if [ -z "${token:-}" ]; then
+        err "TELEGRAM_BOT_TOKEN kosong"
+        failed=$((failed + 1))
+    elif is_placeholder_token "$token"; then
+        err "TELEGRAM_BOT_TOKEN masih placeholder"
+        failed=$((failed + 1))
+    else
+        if check_telegram_token "$token"; then
+            ok "Telegram token valid (@${TELEGRAM_CHECK_USERNAME:-unknown})"
+        else
+            local code=$?
+            if [ "$code" -eq 10 ]; then
+                warn "Telegram token tidak bisa diverifikasi (network): $TELEGRAM_CHECK_DETAIL"
+                warned=$((warned + 1))
+            else
+                err "Telegram token invalid: $TELEGRAM_CHECK_DETAIL"
+                failed=$((failed + 1))
+            fi
+        fi
+    fi
+
+    local private_key
+    private_key="$(read_env_value PRIVATE_KEY)"
+    if [ -z "$private_key" ]; then
+        err "PRIVATE_KEY kosong"
+        failed=$((failed + 1))
+    elif is_valid_private_key "$private_key"; then
+        ok "PRIVATE_KEY format valid"
+    else
+        err "PRIVATE_KEY format invalid (harus 64 hex chars)"
+        failed=$((failed + 1))
+    fi
+
+    local rpc_primary rpc_fallback_raw rpc_ok_count
+    rpc_primary="$(read_env_value RPC_URL)"
+    rpc_fallback_raw="$(read_env_value RPC_FALLBACK_URLS)"
+    [ -n "$rpc_primary" ] || rpc_primary="https://mainnet.base.org"
+    rpc_ok_count=0
+
+    local seen_rpc=""
+    for rpc in "$rpc_primary" $(echo "$rpc_fallback_raw" | tr ',' ' '); do
+        rpc="$(echo "$rpc" | xargs)"
+        [ -n "$rpc" ] || continue
+        if echo "$seen_rpc" | grep -Fqx "$rpc"; then
+            continue
+        fi
+        seen_rpc="${seen_rpc}"$'\n'"$rpc"
+
+        if check_rpc_endpoint "$rpc"; then
+            ok "RPC healthy: $rpc"
+            rpc_ok_count=$((rpc_ok_count + 1))
+        else
+            warn "RPC failed: $rpc"
+            warned=$((warned + 1))
+        fi
+    done
+    if [ "$rpc_ok_count" -eq 0 ]; then
+        err "Tidak ada RPC yang healthy"
+        failed=$((failed + 1))
+    fi
+
+    local ipfs_gateways
+    ipfs_gateways="$(read_env_value IPFS_GATEWAYS)"
+    if [ -z "$ipfs_gateways" ]; then
+        ipfs_gateways="https://gateway.pinata.cloud/ipfs"
+    fi
+    local ipfs_first
+    ipfs_first="$(echo "$ipfs_gateways" | tr ',' '\n' | head -n1 | xargs)"
+    if [ -n "$ipfs_first" ]; then
+        if curl -fsS --max-time 10 "$ipfs_first" >/dev/null 2>&1; then
+            ok "IPFS gateway reachable: $ipfs_first"
+        else
+            warn "IPFS gateway unreachable: $ipfs_first"
+            warned=$((warned + 1))
+        fi
+    fi
+
+    if pm2_exists && pm2_app_exists; then
+        local pm2_pid
+        pm2_pid="$(pm2 pid "$APP_NAME" 2>/dev/null | tr -d '[:space:]' || true)"
+        if [ -n "$pm2_pid" ] && [ "$pm2_pid" != "0" ]; then
+            ok "PM2 app online: $APP_NAME (PID $pm2_pid)"
+        else
+            warn "PM2 app terdaftar tapi tidak online: $APP_NAME"
+            warned=$((warned + 1))
+        fi
+    else
+        warn "PM2 app belum terdaftar: $APP_NAME"
+        warned=$((warned + 1))
+    fi
+
+    echo ""
+    if [ "$failed" -gt 0 ]; then
+        err "Doctor selesai dengan $failed error kritis dan $warned warning."
+        return 1
+    fi
+    ok "Doctor selesai. Tidak ada error kritis. Warning: $warned"
 }
 
 ensure_clean_or_forced() {
@@ -602,8 +765,26 @@ do_uninstall() {
 
     rm -f /tmp/clank-and-claw-*.lock || true
 
-    if [ -d "$PROJECT_DIR" ]; then
-        rm -rf "$PROJECT_DIR"
+    # Safety guard: never allow uninstall to remove unsafe paths.
+    if [ -z "${PROJECT_DIR:-}" ] || [ "$PROJECT_DIR" = "/" ] || [ "$PROJECT_DIR" = "$HOME" ] || [ "$PROJECT_DIR" = "." ]; then
+        err "PROJECT_DIR tidak aman untuk dihapus: '$PROJECT_DIR'"
+        exit 1
+    fi
+
+    local resolved_project=""
+    resolved_project="$(cd "$(dirname "$PROJECT_DIR")" 2>/dev/null && pwd)/$(basename "$PROJECT_DIR")"
+    if [ "$resolved_project" = "/" ] || [ "$resolved_project" = "$HOME" ] || [ "$resolved_project" = "/root" ] || [ "$resolved_project" = "/home" ]; then
+        err "Resolved PROJECT_DIR tidak aman: '$resolved_project'"
+        exit 1
+    fi
+    if [ "$(basename "$resolved_project")" != "clank-and-claw" ] && [ "$FORCE_MODE" -ne 1 ]; then
+        err "Refuse uninstall untuk path non-standar: '$resolved_project'"
+        err "Gunakan --force jika memang sengaja."
+        exit 1
+    fi
+
+    if [ -d "$resolved_project" ]; then
+        rm -rf "$resolved_project"
     fi
 
     ok "Uninstall selesai bersih."
@@ -631,16 +812,17 @@ wizard() {
         echo "===== CLANK & CLAW WIZARD ====="
         echo "1) Install / Reinstall"
         echo "2) Update (git + npm + test + restart)"
-        echo "3) Telegram bot setup (.env + token validation)"
-        echo "4) Start bot"
-        echo "5) Stop bot"
-        echo "6) Restart bot"
-        echo "7) Status"
-        echo "8) Logs"
-        echo "9) Network check"
-        echo "10) Self-heal"
-        echo "11) Backup"
-        echo "12) Uninstall clean"
+        echo "3) Doctor (preflight full check)"
+        echo "4) Telegram bot setup (.env + token validation)"
+        echo "5) Start bot"
+        echo "6) Stop bot"
+        echo "7) Restart bot"
+        echo "8) Status"
+        echo "9) Logs"
+        echo "10) Network check"
+        echo "11) Self-heal"
+        echo "12) Backup"
+        echo "13) Uninstall clean"
         echo "0) Exit"
         echo -n "Pilih menu: "
         read -r menu
@@ -648,16 +830,17 @@ wizard() {
         case "$menu" in
             1) do_install ;;
             2) do_update ;;
-            3) setup_telegram_env ;;
-            4) start_bot ;;
-            5) stop_bot ;;
-            6) restart_bot ;;
-            7) show_status ;;
-            8) show_logs 120 ;;
-            9) run_netcheck ;;
-            10) do_heal ;;
-            11) do_backup ;;
-            12) do_uninstall ;;
+            3) do_doctor ;;
+            4) setup_telegram_env ;;
+            5) start_bot ;;
+            6) stop_bot ;;
+            7) restart_bot ;;
+            8) show_status ;;
+            9) show_logs 120 ;;
+            10) run_netcheck ;;
+            11) do_heal ;;
+            12) do_backup ;;
+            13) do_uninstall ;;
             0) break ;;
             *) warn "Pilihan tidak valid" ;;
         esac
@@ -683,6 +866,7 @@ main() {
         wizard) wizard ;;
         install) do_install ;;
         update) do_update ;;
+        doctor) do_doctor ;;
         telegram-setup) setup_telegram_env ;;
         start) start_bot ;;
         stop) stop_bot ;;

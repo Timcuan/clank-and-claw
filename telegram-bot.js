@@ -33,8 +33,42 @@ import { configStore } from './lib/config-store.js';
 // CONFIGURATION
 // ═══════════════════════════════════════════
 
+const normalizeAdminCandidate = (value) => String(value || '').trim();
+const isPlaceholderAdminValue = (value) => {
+    const normalized = normalizeAdminCandidate(value).toUpperCase();
+    if (!normalized) return false;
+    if (normalized === '123456789') return true;
+    return (
+        normalized.includes('REPLACE')
+        || normalized.includes('YOUR')
+        || normalized.includes('<')
+        || normalized.includes('>')
+    );
+};
+const parseAdminAllowlist = (rawValue) => {
+    const rawItems = String(rawValue || '')
+        .split(/[,\n;]+/g)
+        .map(normalizeAdminCandidate)
+        .filter(Boolean);
+    const ids = [];
+    let placeholderCount = 0;
+    for (const item of rawItems) {
+        if (isPlaceholderAdminValue(item)) {
+            placeholderCount++;
+            continue;
+        }
+        ids.push(item);
+    }
+    return {
+        ids: [...new Set(ids)],
+        placeholderCount
+    };
+};
+
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const ADMIN_CHAT_IDS = (process.env.TELEGRAM_ADMIN_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+const parsedAdmins = parseAdminAllowlist(process.env.TELEGRAM_ADMIN_IDS);
+const ADMIN_CHAT_IDS = parsedAdmins.ids;
+const SKIPPED_ADMIN_PLACEHOLDERS = parsedAdmins.placeholderCount;
 const DEFAULT_FEES = DEFAULT_SESSION_FEES;
 const MARKDOWN_ERROR_TEXT = 'parse entities';
 const MAX_TELEGRAM_TEXT_LENGTH = 3900;
@@ -609,9 +643,12 @@ const resetSession = (chatId, options = {}) => {
     return session;
 };
 
-const isAuthorized = (chatId) => {
+const isAuthorized = (chatId, userId) => {
     if (ADMIN_CHAT_IDS.length === 0) return true;
-    return ADMIN_CHAT_IDS.includes(String(chatId));
+    const candidates = [chatId, userId]
+        .filter(v => v !== undefined && v !== null)
+        .map(v => String(v));
+    return candidates.some(id => ADMIN_CHAT_IDS.includes(id));
 };
 
 // ═══════════════════════════════════════════
@@ -1869,10 +1906,18 @@ ${t.spoofTo ? '\n\n🎭 Rewards routed to stealth address.' : ''}
 const handleUpdate = async (update) => {
     // Handle callback queries (button presses)
     if (update.callback_query) {
-        const { id, data, message } = update.callback_query;
+        const { id, data, message, from } = update.callback_query;
         await apiCall('answerCallbackQuery', { callback_query_id: id }).catch(() => { });
         const chatId = message?.chat?.id;
+        const userId = from?.id;
         if (!chatId) return;
+        if (!isAuthorized(chatId, userId)) {
+            const details = [
+                `User ID: \`${userId || 'unknown'}\``,
+                `Chat ID: \`${chatId}\``
+            ].join('\n');
+            return await sendMessage(chatId, `⛔ Unauthorized.\n\n${details}\n\nAsk admin to add your ID in \`TELEGRAM_ADMIN_IDS\`.`);
+        }
 
         if (data === 'confirm_deploy') {
             const session = getSession(chatId);
@@ -1893,11 +1938,16 @@ const handleUpdate = async (update) => {
     if (!message) return;
 
     const chatId = message.chat.id;
+    const userId = message.from?.id;
     const username = message.from?.username;
 
     // Authorization check
-    if (!isAuthorized(chatId)) {
-        return await sendMessage(chatId, `⛔ Unauthorized.\n\nYour ID: \`${chatId}\`\nAsk admin to add you.`);
+    if (!isAuthorized(chatId, userId)) {
+        const details = [
+            `User ID: \`${userId || 'unknown'}\``,
+            `Chat ID: \`${chatId}\``
+        ].join('\n');
+        return await sendMessage(chatId, `⛔ Unauthorized.\n\n${details}\n\nAsk admin to add your ID in \`TELEGRAM_ADMIN_IDS\`.`);
     }
 
     const session = getSession(chatId);
@@ -2085,6 +2135,9 @@ const main = async () => {
     console.log(`${pkCheck.valid ? '✅' : '❌'} Wallet: ${pkCheck.valid ? 'Ready' : pkCheck.error}`);
     console.log(`${ipfsStatus.any ? '✅' : '⚠️'} IPFS: ${ipfsProviders.length > 0 ? ipfsProviders.join(', ') : 'Not configured'}`);
     console.log(`📍 Admins: ${ADMIN_CHAT_IDS.length > 0 ? ADMIN_CHAT_IDS.join(', ') : 'All allowed'}`);
+    if (SKIPPED_ADMIN_PLACEHOLDERS > 0) {
+        console.log(`⚠️ Ignored ${SKIPPED_ADMIN_PLACEHOLDERS} placeholder admin ID(s) from TELEGRAM_ADMIN_IDS`);
+    }
     console.log(`💾 Config DB: ${storeStats.path} (${storeStats.users} chats, ${storeStats.presets} presets)`);
     console.log(`🌐 Telegram API: ${TELEGRAM_API_ORIGINS.join(' | ')}`);
     if (TELEGRAM_FILE_BASE) {

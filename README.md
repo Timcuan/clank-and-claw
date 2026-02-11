@@ -82,6 +82,7 @@ npm run start
 
 Recommended on VPS (PM2, single instance):
 ```bash
+~/bot-setup.sh
 ~/bot-start.sh
 ~/bot-status.sh
 pm2 logs clanker-bot
@@ -143,6 +144,7 @@ DEFAULT_IMAGE_URL=
 
 - `install` bootstrap/reinstall VPS setup
 - `update` git pull + npm install + hardening tests + auto restart bot
+- `telegram-setup` interactive Telegram token/admin setup with live token validation (`getMe`)
 - `heal` clean stale lock/process conflict + webhook cleanup + restart
 - `backup` / `restore` operational backup workflow
 - `uninstall` clean removal of PM2 app, helper scripts, lock files, and project directory
@@ -150,6 +152,7 @@ DEFAULT_IMAGE_URL=
 Common commands:
 
 ```bash
+~/clawctl telegram-setup
 ~/clawctl status
 ~/clawctl update
 ~/clawctl heal
@@ -186,6 +189,17 @@ clank-and-claw/
 - `DRY_RUN=true` validates and simulates deployment without spending gas.
 - For maximum Clankerworld consistency, set `DEFAULT_CONTEXT_ID` to a valid tweet/cast ID.
 - Run only one bot instance per token to avoid Telegram `getUpdates` conflict. The bot now uses a local lock file to block duplicate local runs.
+- PM2 now stops restart loop on fatal startup config errors (e.g. invalid/missing bot token).
+
+## Telegram Setup & Unauthorized Fix
+
+If logs show `Invalid bot token (Unauthorized)`:
+
+1. Run `~/clawctl telegram-setup` and input a valid token from `@BotFather`.
+2. Run `~/clawctl start`.
+3. Verify with `~/clawctl status` and `pm2 logs clanker-bot`.
+
+Do not leave placeholder values like `123456789:REPLACE_ME` in `.env`.
 
 ## Release Notes
 

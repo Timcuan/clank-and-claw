@@ -29,6 +29,7 @@ Usage:
   bash vps-manager.sh install
   bash vps-manager.sh update [--force]
   bash vps-manager.sh start
+  bash vps-manager.sh telegram-setup
   bash vps-manager.sh stop
   bash vps-manager.sh restart
   bash vps-manager.sh status
@@ -80,11 +81,184 @@ telegram_token() {
     grep -E '^TELEGRAM_BOT_TOKEN=' "$env_file" | tail -n1 | cut -d= -f2- | tr -d '\r'
 }
 
+ensure_env_file() {
+    local env_file="$PROJECT_DIR/.env"
+    if [ -f "$env_file" ]; then
+        return 0
+    fi
+
+    if [ -f "$PROJECT_DIR/.env.vps.example" ]; then
+        cp "$PROJECT_DIR/.env.vps.example" "$env_file"
+        warn ".env belum ada, dibuat dari .env.vps.example"
+        return 0
+    fi
+    if [ -f "$PROJECT_DIR/.env.example" ]; then
+        cp "$PROJECT_DIR/.env.example" "$env_file"
+        warn ".env belum ada, dibuat dari .env.example"
+        return 0
+    fi
+
+    touch "$env_file"
+    warn ".env kosong dibuat di $env_file"
+}
+
+read_env_value() {
+    local key="$1"
+    local env_file="$PROJECT_DIR/.env"
+    if [ ! -f "$env_file" ]; then
+        echo ""
+        return 0
+    fi
+    grep -E "^${key}=" "$env_file" | tail -n1 | cut -d= -f2- | tr -d '\r'
+}
+
+upsert_env_value() {
+    local key="$1"
+    local value="$2"
+    local env_file="$PROJECT_DIR/.env"
+    local tmp
+    tmp="$(mktemp)"
+    awk -v key="$key" -v value="$value" '
+BEGIN { done=0 }
+{
+    if ($0 ~ "^" key "=") {
+        print key "=" value
+        done=1
+    } else {
+        print $0
+    }
+}
+END {
+    if (!done) print key "=" value
+}
+' "$env_file" > "$tmp"
+    mv "$tmp" "$env_file"
+}
+
+is_placeholder_token() {
+    local token="$1"
+    local normalized
+    normalized="$(echo "$token" | tr '[:lower:]' '[:upper:]')"
+    [[ "$normalized" == *"REPLACE_ME"* || "$normalized" == *"YOUR_BOT_TOKEN"* || "$normalized" == *"<TOKEN"* ]]
+}
+
+TELEGRAM_CHECK_USERNAME=""
+TELEGRAM_CHECK_DETAIL=""
+check_telegram_token() {
+    local token="$1"
+    TELEGRAM_CHECK_USERNAME=""
+    TELEGRAM_CHECK_DETAIL=""
+
+    if [ -z "$token" ]; then
+        TELEGRAM_CHECK_DETAIL="missing token"
+        return 1
+    fi
+
+    local resp=""
+    if ! resp="$(curl -sS --max-time 15 "https://api.telegram.org/bot${token}/getMe" 2>/dev/null)"; then
+        TELEGRAM_CHECK_DETAIL="network request failed"
+        return 10
+    fi
+
+    if echo "$resp" | grep -Eq '"ok"[[:space:]]*:[[:space:]]*true'; then
+        TELEGRAM_CHECK_USERNAME="$(echo "$resp" | sed -n 's/.*"username":"\([^"]*\)".*/\1/p' | head -n1)"
+        return 0
+    fi
+
+    if echo "$resp" | grep -qi 'Unauthorized'; then
+        TELEGRAM_CHECK_DETAIL="Unauthorized (invalid token)"
+        return 2
+    fi
+
+    TELEGRAM_CHECK_DETAIL="$(echo "$resp" | sed -n 's/.*"description":"\([^"]*\)".*/\1/p' | head -n1)"
+    if [ -z "$TELEGRAM_CHECK_DETAIL" ]; then
+        TELEGRAM_CHECK_DETAIL="unexpected Telegram API response"
+    fi
+    return 3
+}
+
+setup_telegram_env() {
+    require_project
+    cd "$PROJECT_DIR"
+    ensure_env_file
+
+    local current_token current_admins token admins api_bases
+    current_token="$(read_env_value TELEGRAM_BOT_TOKEN)"
+    current_admins="$(read_env_value TELEGRAM_ADMIN_IDS)"
+
+    echo ""
+    echo "===== TELEGRAM BOT SETUP ====="
+    if [ -n "$current_token" ]; then
+        echo "Current token: ${current_token:0:10}..."
+    else
+        echo "Current token: (empty)"
+    fi
+    echo "Current admins: ${current_admins:-"(empty)"}"
+    echo ""
+
+    while true; do
+        read -r -p "Masukkan TELEGRAM_BOT_TOKEN (kosong = pakai nilai saat ini): " token
+        if [ -z "$token" ]; then
+            token="$current_token"
+        fi
+        if [ -z "$token" ]; then
+            err "Token tidak boleh kosong."
+            continue
+        fi
+        if is_placeholder_token "$token"; then
+            err "Token masih placeholder (${token})."
+            continue
+        fi
+
+        if check_telegram_token "$token"; then
+            ok "Token valid. Bot username: @${TELEGRAM_CHECK_USERNAME:-unknown}"
+            break
+        fi
+
+        local code=$?
+        if [ "$code" -eq 2 ]; then
+            err "Token tidak valid: $TELEGRAM_CHECK_DETAIL"
+        elif [ "$code" -eq 10 ]; then
+            warn "Gagal verifikasi token karena network: $TELEGRAM_CHECK_DETAIL"
+            read -r -p "Simpan token ini tetap? (y/N): " keep_anyway
+            if [[ "${keep_anyway:-}" =~ ^[Yy]$ ]]; then
+                break
+            fi
+        else
+            err "Token tidak lolos verifikasi: $TELEGRAM_CHECK_DETAIL"
+        fi
+    done
+
+    read -r -p "Masukkan TELEGRAM_ADMIN_IDS (comma-separated, kosong = ${current_admins:-none}): " admins
+    if [ -z "$admins" ]; then
+        admins="$current_admins"
+    fi
+
+    api_bases="$(read_env_value TELEGRAM_API_BASES)"
+    if [ -z "$api_bases" ]; then
+        api_bases="https://api.telegram.org"
+    fi
+
+    upsert_env_value TELEGRAM_BOT_TOKEN "$token"
+    upsert_env_value TELEGRAM_ADMIN_IDS "$admins"
+    upsert_env_value TELEGRAM_API_BASES "$api_bases"
+    ok "Telegram config tersimpan di $PROJECT_DIR/.env"
+
+    read -r -p "Restart bot sekarang? (Y/n): " restart_now
+    if [ -z "$restart_now" ] || [[ "$restart_now" =~ ^[Yy]$ ]]; then
+        restart_bot
+    fi
+}
+
 clear_telegram_webhook() {
     local token
     token="$(telegram_token || true)"
     if [ -z "${token:-}" ]; then
         warn "TELEGRAM_BOT_TOKEN tidak ada di .env, skip webhook cleanup"
+        return 0
+    fi
+    if is_placeholder_token "$token"; then
+        warn "TELEGRAM_BOT_TOKEN masih placeholder, skip webhook cleanup"
         return 0
     fi
 
@@ -139,6 +313,41 @@ stop_direct_bot_processes() {
 start_bot() {
     require_project
     cd "$PROJECT_DIR"
+    ensure_env_file
+
+    local token
+    token="$(telegram_token || true)"
+    if [ -z "${token:-}" ]; then
+        err "TELEGRAM_BOT_TOKEN kosong. Jalankan: bash vps-manager.sh telegram-setup"
+        exit 1
+    fi
+    if is_placeholder_token "$token"; then
+        err "TELEGRAM_BOT_TOKEN masih placeholder: $token"
+        err "Jalankan: bash vps-manager.sh telegram-setup"
+        exit 1
+    fi
+
+    if ! check_telegram_token "$token"; then
+        local code=$?
+        if [ "$code" -eq 2 ]; then
+            err "Token Telegram invalid: $TELEGRAM_CHECK_DETAIL"
+            if pm2_exists && pm2_app_exists; then
+                pm2 stop "$APP_NAME" >/dev/null 2>&1 || true
+                warn "PM2 app dihentikan untuk mencegah restart loop."
+            fi
+            err "Perbaiki token dulu: bash vps-manager.sh telegram-setup"
+            exit 1
+        fi
+        if [ "$code" -eq 10 ]; then
+            warn "Validasi token skipped (network issue: $TELEGRAM_CHECK_DETAIL). Lanjut start..."
+        else
+            err "Token Telegram tidak lolos verifikasi: $TELEGRAM_CHECK_DETAIL"
+            exit 1
+        fi
+    else
+        ok "Telegram token OK (@${TELEGRAM_CHECK_USERNAME:-unknown})"
+    fi
+
     cleanup_stale_locks
     clear_telegram_webhook
 
@@ -313,13 +522,8 @@ do_update() {
     npm test
 
     cleanup_stale_locks
-    if pm2_exists && pm2_app_exists; then
-        pm2 restart "$APP_NAME" --update-env
-        pm2 save >/dev/null 2>&1 || true
-        ok "Bot direstart setelah update"
-    else
-        warn "PM2 app tidak aktif. Jalankan: bash vps-manager.sh start"
-    fi
+    restart_bot
+    ok "Update + restart selesai."
 }
 
 do_install() {
@@ -353,13 +557,9 @@ do_heal() {
         stop_direct_bot_processes
     fi
 
-    if pm2_exists && pm2_app_exists; then
-        pm2 restart "$APP_NAME" --update-env
-        ok "Self-heal selesai via PM2 restart"
-    else
-        warn "PM2 app tidak ada, fallback start direct"
-        start_bot
-    fi
+    stop_bot || true
+    start_bot
+    ok "Self-heal selesai."
 }
 
 confirm_or_exit() {
@@ -393,6 +593,7 @@ do_uninstall() {
         "$HOME/claw-uninstall.sh" \
         "$HOME/claw-netcheck.sh" \
         "$HOME/run-bot.sh" \
+        "$HOME/bot-setup.sh" \
         "$HOME/bot-start.sh" \
         "$HOME/bot-stop.sh" \
         "$HOME/bot-status.sh" \
@@ -430,15 +631,16 @@ wizard() {
         echo "===== CLANK & CLAW WIZARD ====="
         echo "1) Install / Reinstall"
         echo "2) Update (git + npm + test + restart)"
-        echo "3) Start bot"
-        echo "4) Stop bot"
-        echo "5) Restart bot"
-        echo "6) Status"
-        echo "7) Logs"
-        echo "8) Network check"
-        echo "9) Self-heal"
-        echo "10) Backup"
-        echo "11) Uninstall clean"
+        echo "3) Telegram bot setup (.env + token validation)"
+        echo "4) Start bot"
+        echo "5) Stop bot"
+        echo "6) Restart bot"
+        echo "7) Status"
+        echo "8) Logs"
+        echo "9) Network check"
+        echo "10) Self-heal"
+        echo "11) Backup"
+        echo "12) Uninstall clean"
         echo "0) Exit"
         echo -n "Pilih menu: "
         read -r menu
@@ -446,15 +648,16 @@ wizard() {
         case "$menu" in
             1) do_install ;;
             2) do_update ;;
-            3) start_bot ;;
-            4) stop_bot ;;
-            5) restart_bot ;;
-            6) show_status ;;
-            7) show_logs 120 ;;
-            8) run_netcheck ;;
-            9) do_heal ;;
-            10) do_backup ;;
-            11) do_uninstall ;;
+            3) setup_telegram_env ;;
+            4) start_bot ;;
+            5) stop_bot ;;
+            6) restart_bot ;;
+            7) show_status ;;
+            8) show_logs 120 ;;
+            9) run_netcheck ;;
+            10) do_heal ;;
+            11) do_backup ;;
+            12) do_uninstall ;;
             0) break ;;
             *) warn "Pilihan tidak valid" ;;
         esac
@@ -480,6 +683,7 @@ main() {
         wizard) wizard ;;
         install) do_install ;;
         update) do_update ;;
+        telegram-setup) setup_telegram_env ;;
         start) start_bot ;;
         stop) stop_bot ;;
         restart) restart_bot ;;

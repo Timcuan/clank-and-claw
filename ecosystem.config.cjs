@@ -14,6 +14,8 @@ module.exports = {
         restart_delay: 5000,
         max_restarts: 1000,
         min_uptime: "1m",
+        // Exit code 2 = fatal configuration issue (invalid/missing token, duplicate instance)
+        stop_exit_codes: [2],
 
         // Logging
         error_file: "./logs/err.log",

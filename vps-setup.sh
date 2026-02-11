@@ -253,52 +253,29 @@ chmod +x ~/run-bot.sh
 cat > ~/bot-start.sh << 'EOF'
 #!/bin/bash
 set -euo pipefail
-cd ~/clank-and-claw
-
-if [ ! -f ".env" ]; then
-  echo "❌ .env not found in ~/clank-and-claw"
-  exit 1
-fi
-
-if ! command -v pm2 >/dev/null 2>&1; then
-  echo "❌ pm2 not installed"
-  exit 1
-fi
-
-if pm2 describe clanker-bot >/dev/null 2>&1; then
-  pm2 restart clanker-bot --update-env
-else
-  pm2 start ecosystem.config.cjs --only clanker-bot --update-env
-fi
-
-pm2 save
-pm2 status clanker-bot
+~/clawctl start "$@"
 EOF
 chmod +x ~/bot-start.sh
+
+# Telegram setup helper
+cat > ~/bot-setup.sh << 'EOF'
+#!/bin/bash
+set -euo pipefail
+~/clawctl telegram-setup "$@"
+EOF
+chmod +x ~/bot-setup.sh
 
 cat > ~/bot-stop.sh << 'EOF'
 #!/bin/bash
 set -euo pipefail
-if ! command -v pm2 >/dev/null 2>&1; then
-  echo "pm2 not installed"
-  exit 0
-fi
-pm2 stop clanker-bot || true
-pm2 delete clanker-bot || true
-pm2 save || true
-echo "✅ clanker-bot stopped"
+~/clawctl stop "$@"
 EOF
 chmod +x ~/bot-stop.sh
 
 cat > ~/bot-status.sh << 'EOF'
 #!/bin/bash
 set -euo pipefail
-if command -v pm2 >/dev/null 2>&1; then
-  pm2 status clanker-bot || true
-fi
-echo ""
-echo "Process check:"
-pgrep -fa "node .*telegram-bot.js" || echo "No direct telegram-bot.js process found"
+~/clawctl status "$@"
 EOF
 chmod +x ~/bot-status.sh
 
@@ -341,10 +318,12 @@ echo "📁 Project: ~/clank-and-claw"
 echo ""
 echo "🚀 Quick Commands:"
 echo "   ~/clawctl wizard               # All-in-one install/update/uninstall wizard"
+echo "   ~/clawctl telegram-setup       # Setup + validate Telegram token"
 echo "   ~/claw-update.sh               # Safe update: git + npm + tests + restart"
 echo "   ~/claw-uninstall.sh            # Clean uninstall (with backup)"
 echo "   ~/deploy-token.sh              # Deploy from .env"
 echo "   ~/openclaw.sh --file input.json # Deploy from JSON"
+echo "   ~/bot-setup.sh                 # Setup + validate Telegram bot token"
 echo "   ~/bot-start.sh                 # Start bot with PM2 (recommended)"
 echo "   ~/bot-stop.sh                  # Stop PM2 bot"
 echo "   ~/bot-status.sh                # Check bot status"
@@ -353,7 +332,7 @@ echo "   ~/run-bot.sh                   # Start direct (manual, no PM2)"
 echo "   ~/claw-netcheck.sh             # Diagnose VPS network/DNS/gateway"
 echo ""
 echo "🤖 Telegram Bot Setup:"
-echo "   1. nano ~/clank-and-claw/.env  # Add TELEGRAM_BOT_TOKEN"
+echo "   1. ~/bot-setup.sh              # Input token/admin + validate to Telegram API"
 echo "   2. ~/bot-start.sh"
 echo "   3. pm2 logs clanker-bot"
 echo ""

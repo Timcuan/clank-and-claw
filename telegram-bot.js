@@ -43,11 +43,15 @@ const DEFAULT_RPC_URL = 'https://mainnet.base.org';
 const MESSAGE_NOT_MODIFIED_TEXT = 'message is not modified';
 const TELEGRAM_HEALTH_TIMEOUT_MS = 12000;
 const RPC_HEALTH_TIMEOUT_MS = 10000;
+const FATAL_CONFIG_EXIT_CODE = 2;
 const TELEGRAM_CONFLICT_BACKOFF_MS = Math.max(5000, Number(process.env.TELEGRAM_CONFLICT_BACKOFF_MS || 30000));
 const TELEGRAM_MAX_CONFLICT_BACKOFF_MS = Math.max(TELEGRAM_CONFLICT_BACKOFF_MS, Number(process.env.TELEGRAM_MAX_CONFLICT_BACKOFF_MS || 300000));
+const TOKEN_FINGERPRINT = String(process.env.TELEGRAM_BOT_TOKEN || '')
+    .slice(0, 16)
+    .replace(/[^a-zA-Z0-9_-]/g, '_') || 'bot';
 const BOT_LOCK_FILE = String(
     process.env.BOT_LOCK_FILE
-    || path.join(os.tmpdir(), `clank-and-claw-${String(process.env.TELEGRAM_BOT_TOKEN || '').slice(0, 16) || 'bot'}.lock`)
+    || path.join(os.tmpdir(), `clank-and-claw-${TOKEN_FINGERPRINT}.lock`)
 ).trim();
 const SPOOF_DISABLE_KEYWORDS = new Set(['off', 'disable', 'none', 'clear', 'reset']);
 const TELEGRAM_HTTP_AGENT = new https.Agent({
@@ -83,6 +87,15 @@ const buildTelegramFileUrl = (origin, filePath) => {
 
 const formatHealthError = (value) => String(value || 'unknown error').replace(/\s+/g, ' ').trim();
 let botLockFd = null;
+const isPermanentStartupError = (message) => {
+    const text = String(message || '').toLowerCase();
+    return (
+        text.includes('telegram_bot_token not set')
+        || text.includes('invalid bot token')
+        || text.includes('another bot instance is already running')
+        || text.includes('unauthorized')
+    );
+};
 
 const isPidAlive = (pid) => {
     if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -1329,7 +1342,7 @@ const main = async () => {
 
     if (!BOT_TOKEN) {
         console.error('❌ TELEGRAM_BOT_TOKEN not set');
-        process.exit(1);
+        process.exit(FATAL_CONFIG_EXIT_CODE);
     }
 
     acquireBotLock();
@@ -1340,7 +1353,7 @@ const main = async () => {
     if (!me.ok) {
         console.error(`❌ Invalid bot token (${me.description || 'unknown error'})`);
         releaseBotLock();
-        process.exit(1);
+        process.exit(FATAL_CONFIG_EXIT_CODE);
     }
 
     const webhookInfo = await apiCall('getWebhookInfo', {}, 1).catch(() => ({ ok: false }));
@@ -1405,5 +1418,6 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 main().catch(err => {
     console.error('❌ Fatal Startup Error:', err);
     releaseBotLock();
-    process.exit(1);
+    const code = isPermanentStartupError(err?.message) ? FATAL_CONFIG_EXIT_CODE : 1;
+    process.exit(code);
 });

@@ -13,11 +13,17 @@ import { base } from 'viem/chains';
 
 const FACTORY_ADDRESS = '0xe85a59c628f7d27878aceb4bf3b35733630083a9';
 const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
+const BASE_WETH_ADDRESS = '0x4200000000000000000000000000000000000006';
 const ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 const PRIVATE_KEY_REGEX = /^0x[0-9a-fA-F]{64}$/;
 const SDK_CONTEXT_PLATFORMS = new Set(['twitter', 'farcaster', 'clanker']);
 const RECEIPT_TIMEOUT_MS = 90_000;
 const FALLBACK_RECEIPT_TIMEOUT_MS = 45_000;
+const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+const ERC20_METADATA_ABI = [
+    { type: 'function', name: 'name', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] },
+    { type: 'function', name: 'symbol', stateMutability: 'view', inputs: [], outputs: [{ type: 'string' }] }
+];
 
 const parseCsvUrls = (value) => (String(value || ''))
     .split(',')
@@ -44,6 +50,13 @@ const isCandidateAddress = (value) => {
     return lowered !== FACTORY_ADDRESS && lowered !== ZERO_ADDRESS;
 };
 
+const normalizeText = (value) => String(value || '').trim().toLowerCase();
+
+const isZeroTopicAddress = (topic) => {
+    if (typeof topic !== 'string') return false;
+    return topic.toLowerCase() === `0x${'0'.repeat(64)}`;
+};
+
 const extractAddressFromTopic = (topic) => {
     if (typeof topic !== 'string' || topic.length < 40) return null;
     const candidate = `0x${topic.slice(-40)}`;
@@ -66,6 +79,9 @@ const extractAddressCandidatesFromData = (data) => {
 
 const collectAddressCandidates = (logs = []) => {
     const candidates = new Map();
+    const fromLogAddress = new Set();
+    const fromMintLikeTransfer = new Set();
+    const fromFactoryEmission = new Set();
     const pushCandidate = (value) => {
         if (!isCandidateAddress(value)) return;
         const key = value.toLowerCase();
@@ -73,35 +89,141 @@ const collectAddressCandidates = (logs = []) => {
     };
 
     for (const log of logs) {
+        if (isCandidateAddress(log.address)) {
+            const key = log.address.toLowerCase();
+            fromLogAddress.add(key);
+            pushCandidate(log.address);
+        }
+
+        const topic0 = String(log?.topics?.[0] || '').toLowerCase();
+        if (topic0 === ERC20_TRANSFER_TOPIC && isZeroTopicAddress(log?.topics?.[1]) && isCandidateAddress(log.address)) {
+            fromMintLikeTransfer.add(log.address.toLowerCase());
+        }
+
+        const isFactoryLog = String(log?.address || '').toLowerCase() === FACTORY_ADDRESS;
+
         if (Array.isArray(log.topics) && log.topics.length > 1) {
             for (const topic of log.topics.slice(1)) {
-                pushCandidate(extractAddressFromTopic(topic));
+                const candidate = extractAddressFromTopic(topic);
+                pushCandidate(candidate);
+                if (isFactoryLog && candidate) fromFactoryEmission.add(candidate.toLowerCase());
             }
         }
 
-        for (const candidate of extractAddressCandidatesFromData(log.data)) {
+        const fromData = extractAddressCandidatesFromData(log.data);
+        for (const candidate of fromData) {
             pushCandidate(candidate);
+            if (isFactoryLog) fromFactoryEmission.add(candidate.toLowerCase());
         }
-
-        pushCandidate(log.address);
     }
 
-    return [...candidates.values()];
+    return {
+        addresses: [...candidates.values()],
+        fromLogAddress,
+        fromMintLikeTransfer,
+        fromFactoryEmission
+    };
 };
 
-const resolveTokenAddress = async (publicClient, logs = []) => {
-    const candidates = collectAddressCandidates(logs);
+const readErc20Metadata = async (publicClient, address) => {
+    let symbol = null;
+    let name = null;
+
+    try {
+        symbol = await publicClient.readContract({
+            address,
+            abi: ERC20_METADATA_ABI,
+            functionName: 'symbol'
+        });
+    } catch {
+        // not an ERC20 (or method unavailable)
+    }
+
+    try {
+        name = await publicClient.readContract({
+            address,
+            abi: ERC20_METADATA_ABI,
+            functionName: 'name'
+        });
+    } catch {
+        // not an ERC20 (or method unavailable)
+    }
+
+    return {
+        symbol: typeof symbol === 'string' ? symbol.trim() : '',
+        name: typeof name === 'string' ? name.trim() : ''
+    };
+};
+
+const scoreCandidate = ({
+    candidate,
+    metadata,
+    expectedSymbol,
+    expectedName,
+    fromLogAddress,
+    fromMintLikeTransfer,
+    fromFactoryEmission
+}) => {
+    let score = 0;
+    const lower = candidate.toLowerCase();
+    const symbol = normalizeText(metadata?.symbol);
+    const name = normalizeText(metadata?.name);
+
+    if (fromLogAddress.has(lower)) score += 8;
+    if (fromMintLikeTransfer.has(lower)) score += 12;
+    if (fromFactoryEmission.has(lower)) score += 25;
+    if (symbol) score += 8;
+    if (name) score += 6;
+
+    if (expectedSymbol && symbol && symbol === expectedSymbol) score += 60;
+    if (expectedName && name && name === expectedName) score += 45;
+
+    // Heuristic penalties for obvious non-new-token infra contracts
+    if (lower === BASE_WETH_ADDRESS) score -= 40;
+    if (symbol === 'weth') score -= 20;
+
+    return score;
+};
+
+const resolveTokenAddress = async (publicClient, logs = [], expected = {}) => {
+    const {
+        addresses: candidates,
+        fromLogAddress,
+        fromMintLikeTransfer,
+        fromFactoryEmission
+    } = collectAddressCandidates(logs);
+
     if (candidates.length === 0) return null;
+
+    const expectedSymbol = normalizeText(expected.symbol);
+    const expectedName = normalizeText(expected.name);
+    let best = { address: null, score: Number.NEGATIVE_INFINITY };
 
     for (const candidate of candidates) {
         try {
             const code = await publicClient.getBytecode({ address: candidate });
-            if (code && code !== '0x') return candidate;
+            if (!code || code === '0x') continue;
+
+            const metadata = await readErc20Metadata(publicClient, candidate);
+            const score = scoreCandidate({
+                candidate,
+                metadata,
+                expectedSymbol,
+                expectedName,
+                fromLogAddress,
+                fromMintLikeTransfer,
+                fromFactoryEmission
+            });
+
+            if (score > best.score) {
+                best = { address: candidate, score };
+            }
         } catch {
             // Continue trying other candidates
         }
     }
 
+    if (best.address) return best.address;
     return candidates[0];
 };
 
@@ -253,7 +375,10 @@ export async function deployToken(config, options = {}) {
 
         if (receipt.logs && receipt.logs.length > 0) {
             console.log('🔍 Scanning transaction logs for token address...');
-            address = await resolveTokenAddress(publicClient, receipt.logs);
+            address = await resolveTokenAddress(publicClient, receipt.logs, {
+                name: config?.name,
+                symbol: config?.symbol
+            });
         }
 
         const scanUrl = address
@@ -290,3 +415,9 @@ export async function deployToken(config, options = {}) {
 }
 
 export default { deployToken };
+
+export const __internal = {
+    collectAddressCandidates,
+    resolveTokenAddress,
+    readErc20Metadata
+};

@@ -57,6 +57,7 @@ Notes:
 - `token.json` runs strict manual mode (no auto-correct for core fields).
 - `token.json` accepts human-friendly syntax (`//` comments, trailing commas) and flat aliases (`fee`, `contextUrl`, top-level socials).
 - `token.json` supports `fees.mode = static | dynamic` with explicit parameters.
+- For social context (`twitter`/`farcaster`), set `context.id` to the real social account id for better clanker.world matching.
 - Preflight output includes smart-fix summary.
 
 ### Input Policy
@@ -94,6 +95,11 @@ npm run start
 CLI deploy (`token.json`):
 ```bash
 npm run deploy
+```
+
+Deploy and require clanker.world indexing confirmation:
+```bash
+node deploy.js --require-index --index-timeout 300
 ```
 
 Dry-run deploy:

@@ -10,6 +10,7 @@ This guide is optimized for **fast manual editing** with **predictable deploy be
   - supports trailing commas
   - handles smart quotes (`“ ”`)
 - Validation still fails fast for invalid required values (`name`, `symbol`, `image`, fee format).
+- For `twitter`/`farcaster` context, set `context.id` to the real social account id to avoid clanker.world provenance mismatch.
 
 Use this before deploy:
 
@@ -29,6 +30,7 @@ Use this flat format for speed:
   "description": "Short description",
   "fee": "6%",
   "contextUrl": "https://x.com/user/status/123456789",
+  "contextUserId": "123456789012345678",
   "x": "https://x.com/mytoken",
   "website": "https://mytoken.com",
   "telegram": "https://t.me/mytoken"
@@ -38,6 +40,7 @@ Use this flat format for speed:
 Flat aliases supported:
 - `fee` -> same as `fees`
 - `contextUrl`, `contextMessageId`, `contextId`, `contextPlatform`
+- `contextUserId`, `contextProfileId`
 - top-level socials: `x`, `twitter`, `website`, `telegram`, `discord`, `farcaster`, etc.
 
 ## 3. Canonical Format (Also Supported)

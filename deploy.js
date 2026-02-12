@@ -2,12 +2,15 @@
 import { deployToken } from './clanker-core.js';
 import { loadConfig, loadTokenConfig } from './lib/config.js';
 import { validateConfig } from './lib/validator.js';
+import { maybeEnrichContextId, waitForTokenIndexing } from './lib/clankerworld.js';
 import 'dotenv/config';
 import fs from 'fs';
 
 const ETH_ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 const PRIVATE_KEY_REGEX = /^0x[a-fA-F0-9]{64}$/;
 const DEFAULT_TOKEN_FILE = 'token.json';
+const DEFAULT_INDEX_TIMEOUT_SECONDS = 180;
+const DEFAULT_INDEX_POLL_SECONDS = 10;
 
 /**
  * 🚀 CLI Token Deployment Agent
@@ -30,6 +33,10 @@ Options:
   --spoof <addr>   Override spoof target address (0x...)
   --strict         Enable strict verification mode
   --check          Validate config only (no deploy)
+  --index-timeout <sec>  Wait time for clanker.world indexing check (default: 180)
+  --no-index-wait  Skip post-deploy clanker.world indexing check
+  --require-index  Fail command if token is not indexed within timeout
+  --no-resolve-context-id  Skip best-effort context.id enrichment for Twitter
   --help, -h       Show this help message
 
 Examples:
@@ -37,7 +44,23 @@ Examples:
   node deploy.js token.json
   node deploy.js --check token.json
   node deploy.js --env
+  node deploy.js --require-index --index-timeout 300
   node deploy.js --spoof 0x1234...abcd`);
+};
+
+const parseBooleanEnv = (value, fallback) => {
+    const raw = String(value ?? '').trim().toLowerCase();
+    if (!raw) return fallback;
+    if (['1', 'true', 'yes', 'on'].includes(raw)) return true;
+    if (['0', 'false', 'no', 'off'].includes(raw)) return false;
+    return fallback;
+};
+
+const parsePositiveInt = (value, fallback) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    const parsed = Math.floor(n);
+    return parsed > 0 ? parsed : fallback;
 };
 
 const parseArgs = (args = process.argv.slice(2)) => {
@@ -47,7 +70,11 @@ const parseArgs = (args = process.argv.slice(2)) => {
         strict: false,
         env: false,
         check: false,
-        help: false
+        help: false,
+        indexWait: parseBooleanEnv(process.env.CLANKER_INDEX_WAIT, true),
+        requireIndex: parseBooleanEnv(process.env.CLANKER_REQUIRE_INDEX, false),
+        resolveContextId: parseBooleanEnv(process.env.RESOLVE_CONTEXT_ID, true),
+        indexTimeoutSeconds: parsePositiveInt(process.env.CLANKER_INDEX_WAIT_SECONDS, DEFAULT_INDEX_TIMEOUT_SECONDS)
     };
 
     for (let i = 0; i < args.length; i++) {
@@ -62,6 +89,31 @@ const parseArgs = (args = process.argv.slice(2)) => {
         }
         if (arg === '--check') {
             options.check = true;
+            continue;
+        }
+        if (arg === '--no-index-wait') {
+            options.indexWait = false;
+            continue;
+        }
+        if (arg === '--require-index') {
+            options.requireIndex = true;
+            continue;
+        }
+        if (arg === '--no-resolve-context-id') {
+            options.resolveContextId = false;
+            continue;
+        }
+        if (arg === '--index-timeout') {
+            const timeoutValue = args[i + 1];
+            if (!timeoutValue || timeoutValue.startsWith('-')) {
+                throw new Error('--index-timeout requires a positive integer value (seconds)');
+            }
+            const parsed = parsePositiveInt(timeoutValue, NaN);
+            if (!Number.isFinite(parsed)) {
+                throw new Error('--index-timeout must be a positive integer (seconds)');
+            }
+            options.indexTimeoutSeconds = parsed;
+            i++;
             continue;
         }
         if (arg === '--help' || arg === '-h') {
@@ -134,6 +186,26 @@ const printPreflight = (config) => {
     }
     if (hasSpoofSplit && socialContextPlatform.has(String(config?.context?.platform || '').toLowerCase())) {
         console.log('   Index risk: spoof split can break Clankerworld context matching.');
+    }
+};
+
+const printIndexingTroubleshooting = (config) => {
+    const platform = String(config?.context?.platform || '').toLowerCase();
+    const contextId = String(config?.context?.id || '').trim();
+    const hasSpoofSplit = Array.isArray(config?.rewards?.recipients) && config.rewards.recipients.length > 1;
+
+    console.log('   Troubleshooting hints:');
+    if ((platform === 'twitter' || platform === 'farcaster') && !contextId) {
+        console.log('   - Set context.id/contextUserId to the exact social account id used in context link.');
+    }
+    if (platform === 'twitter' && contextId && !/^\d+$/.test(contextId)) {
+        console.log('   - For Twitter/X, context.id should be numeric user id when possible.');
+    }
+    if (hasSpoofSplit && (platform === 'twitter' || platform === 'farcaster')) {
+        console.log('   - Disable spoof split when using social context to avoid provenance mismatch.');
+    }
+    if (config?.fees?.type === 'dynamic' && Number(config?.fees?.maxFee) > 500) {
+        console.log('   - Keep dynamic maxFee <= 500 bps for compatibility, unless you intentionally override.');
     }
 };
 
@@ -225,12 +297,22 @@ async function main() {
             config._meta.strictMode = true;
         }
 
-        // 4. Validation
+        // 4. Best-effort context.id enrichment (Twitter)
+        if (opts.resolveContextId && !process.env.CI) {
+            const enrich = await maybeEnrichContextId(config);
+            if (enrich.changed) {
+                console.log(`🧭 Context ID enriched from @${enrich.username} -> ${enrich.id}`);
+            } else if (enrich.reason === 'resolve-empty' || enrich.reason === 'resolve-failed') {
+                console.log('ℹ️  Context ID enrichment skipped (Twitter resolver unavailable or no match).');
+            }
+        }
+
+        // 5. Validation
         console.log('🔍 Validating configuration...');
         config = validateConfig(config);
         printPreflight(config);
 
-        // 5. Execution
+        // 6. Execution
         if (opts.check) {
             console.log('\n✅ Configuration check passed (no deploy executed).');
             return;
@@ -245,7 +327,7 @@ async function main() {
 
         const result = await deployToken(config);
 
-        // 6. Result
+        // 7. Result
         if (result.success) {
             if (result.dryRun) {
                 console.log('\n✅ \x1b[32mDRY RUN COMPLETE (No Gas Spent)\x1b[0m');
@@ -258,6 +340,32 @@ async function main() {
             console.log(`📍 Address:  \x1b[36m${addressDisplay}\x1b[0m`);
             console.log(`🔗 Scan:     \x1b[34m${result.scanUrl}\x1b[0m`);
             console.log('════════════════════════════════════');
+
+            if (result.address && opts.indexWait) {
+                console.log(`\n🔎 Checking clanker.world indexing (timeout: ${opts.indexTimeoutSeconds}s)...`);
+                const indexState = await waitForTokenIndexing(result.address, {
+                    timeoutMs: opts.indexTimeoutSeconds * 1000,
+                    intervalMs: DEFAULT_INDEX_POLL_SECONDS * 1000
+                });
+
+                if (indexState.indexed) {
+                    console.log(`✅ Indexed on clanker.world after ${Math.max(1, Math.round(indexState.elapsedMs / 1000))}s (${indexState.attempts} check(s)).`);
+                    const warningTags = Array.isArray(indexState.token?.warnings) ? indexState.token.warnings.length : 0;
+                    if (warningTags > 0) {
+                        console.log(`ℹ️  Token has ${warningTags} warning tag(s) on clanker.world.`);
+                    }
+                } else {
+                    console.warn('⚠️  Token not found on clanker.world within wait window.');
+                    console.warn(`⚠️  Search URL: https://www.clanker.world/tokens?q=${result.address}`);
+                    if (indexState.error) {
+                        console.warn(`⚠️  Index probe error: ${indexState.error}`);
+                    }
+                    printIndexingTroubleshooting(config);
+                    if (opts.requireIndex) {
+                        throw new Error('Deploy completed on-chain but clanker.world indexing was not confirmed in time');
+                    }
+                }
+            }
         } else {
             throw new Error(result.error || 'Unknown deployment error');
         }

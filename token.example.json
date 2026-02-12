@@ -7,6 +7,7 @@
   "description": "Short token description",
   "fee": "6%",
   "contextUrl": "https://x.com/user/status/123456789",
+  "contextUserId": "123456789012345678",
   "x": "https://x.com/mytoken",
   "website": "https://mytoken.com",
   "telegram": "https://t.me/mytoken",

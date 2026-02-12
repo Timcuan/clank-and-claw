@@ -443,6 +443,31 @@ test('loadTokenConfig infers context.id from twitter status URL handle', () => {
     }
 });
 
+test('loadTokenConfig auto-fills context.id when only messageId is provided', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-context-id-fallback-'));
+    const filePath = path.join(tmpDir, 'token.json');
+    const payload = {
+        name: 'Context Fallback Token',
+        symbol: 'CFB',
+        image: 'https://example.com/cfb.png',
+        fees: '6%',
+        context: {
+            platform: 'website',
+            messageId: 'https://example.com/some/source'
+        }
+    };
+    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+
+    try {
+        const cfg = loadTokenConfig(filePath);
+        assert.equal(cfg.context.platform, 'website');
+        assert.equal(cfg.context.messageId, 'https://example.com/some/source');
+        assert.equal(String(cfg.context.id || '').length > 0, true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('createConfigFromSession normalizes social URLs for metadata', () => {
     const sessionToken = {
         name: 'Norma',

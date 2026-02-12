@@ -73,3 +73,20 @@ test('maybeEnrichContextId resolves numeric id from twitter username', async () 
     assert.equal(config.context.id, '12');
     assert.equal(config._meta.contextIdSource, 'resolved-twitter-id');
 });
+
+test('maybeEnrichContextId auto-fills fallback id for non-twitter platform', async () => {
+    const config = {
+        context: {
+            platform: 'github',
+            messageId: 'https://github.com/openai/openai-node'
+        },
+        metadata: {
+            socialMediaUrls: []
+        },
+        _meta: {}
+    };
+
+    const result = await maybeEnrichContextId(config, {});
+    assert.equal(result.changed, true);
+    assert.match(String(config.context.id), /^auto_github_/);
+});

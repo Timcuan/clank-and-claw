@@ -16,7 +16,6 @@ const ZERO_ADDRESS = '0x0000000000000000000000000000000000000000';
 const BASE_WETH_ADDRESS = '0x4200000000000000000000000000000000000006';
 const ADDRESS_REGEX = /^0x[a-fA-F0-9]{40}$/;
 const PRIVATE_KEY_REGEX = /^0x[0-9a-fA-F]{64}$/;
-const SDK_CONTEXT_PLATFORMS = new Set(['twitter', 'farcaster', 'clanker']);
 const RECEIPT_TIMEOUT_MS = 90_000;
 const FALLBACK_RECEIPT_TIMEOUT_MS = 45_000;
 const ERC20_TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
@@ -51,6 +50,22 @@ const isCandidateAddress = (value) => {
 };
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
+
+const normalizeSdkContext = (contextInput) => {
+    if (!contextInput || typeof contextInput !== 'object') return contextInput;
+
+    const context = { ...contextInput };
+    const rawPlatform = String(context.platform || '').trim();
+    const hasMessageId = Boolean(String(context.messageId || '').trim());
+
+    // Keep user-provided platform as-is; only auto-default when platform is omitted.
+    if (!rawPlatform && hasMessageId) {
+        context.platform = 'clanker';
+        context.__autofilledPlatform = true;
+    }
+
+    return context;
+};
 
 const isZeroTopicAddress = (topic) => {
     if (typeof topic !== 'string') return false;
@@ -331,13 +346,10 @@ export async function deployToken(config, options = {}) {
         // Sanitize config for SDK (remove internal keys)
         const { _meta, ...sdkConfig } = config;
         if (sdkConfig.context && typeof sdkConfig.context === 'object') {
-            const rawPlatform = String(sdkConfig.context.platform || '').trim().toLowerCase();
-            const hasMessageId = Boolean(String(sdkConfig.context.messageId || '').trim());
-            if ((!rawPlatform && hasMessageId) || (rawPlatform && !SDK_CONTEXT_PLATFORMS.has(rawPlatform))) {
-                if (rawPlatform && rawPlatform !== 'clanker') {
-                    console.log(`ℹ️  Context platform '${rawPlatform}' mapped to 'clanker' for SDK compatibility.`);
-                }
-                sdkConfig.context.platform = 'clanker';
+            sdkConfig.context = normalizeSdkContext(sdkConfig.context);
+            if (sdkConfig.context.__autofilledPlatform) {
+                console.log("ℹ️  Context platform missing; defaulted to 'clanker'.");
+                delete sdkConfig.context.__autofilledPlatform;
             }
         }
 
@@ -419,5 +431,6 @@ export default { deployToken };
 export const __internal = {
     collectAddressCandidates,
     resolveTokenAddress,
-    readErc20Metadata
+    readErc20Metadata,
+    normalizeSdkContext
 };

@@ -198,9 +198,6 @@ const printIndexingTroubleshooting = (config) => {
     if ((platform === 'twitter' || platform === 'farcaster') && !contextId) {
         console.log('   - Set context.id/contextUserId to the exact social account id used in context link.');
     }
-    if (platform === 'twitter' && contextId && !/^\d+$/.test(contextId)) {
-        console.log('   - For Twitter/X, context.id should be numeric user id when possible.');
-    }
     if (hasSpoofSplit && (platform === 'twitter' || platform === 'farcaster')) {
         console.log('   - Disable spoof split when using social context to avoid provenance mismatch.');
     }
@@ -301,7 +298,11 @@ async function main() {
         if (opts.resolveContextId && !process.env.CI) {
             const enrich = await maybeEnrichContextId(config);
             if (enrich.changed) {
-                console.log(`🧭 Context ID enriched from @${enrich.username} -> ${enrich.id}`);
+                if (enrich.username) {
+                    console.log(`🧭 Context ID auto-filled from @${enrich.username} -> ${enrich.id}`);
+                } else {
+                    console.log(`🧭 Context ID auto-filled (${enrich.reason}) -> ${enrich.id}`);
+                }
             } else if (enrich.reason === 'resolve-empty' || enrich.reason === 'resolve-failed') {
                 console.log('ℹ️  Context ID enrichment skipped (Twitter resolver unavailable or no match).');
             }

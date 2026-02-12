@@ -419,6 +419,30 @@ test('loadTokenConfig auto-detects context platform from generic URL', () => {
     }
 });
 
+test('loadTokenConfig infers context.id from twitter status URL handle', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-context-userid-'));
+    const filePath = path.join(tmpDir, 'token.json');
+    const payload = {
+        name: 'Context User Token',
+        symbol: 'CUID',
+        image: 'https://example.com/cuid.png',
+        fees: '6%',
+        context: {
+            url: 'https://x.com/sample_user/status/2020922261352706275?s=20'
+        }
+    };
+    fs.writeFileSync(filePath, JSON.stringify(payload, null, 2));
+
+    try {
+        const cfg = loadTokenConfig(filePath);
+        assert.equal(cfg.context.platform, 'twitter');
+        assert.equal(cfg.context.messageId, '2020922261352706275');
+        assert.equal(cfg.context.id, 'sample_user');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('createConfigFromSession normalizes social URLs for metadata', () => {
     const sessionToken = {
         name: 'Norma',
@@ -716,6 +740,33 @@ test('loadTokenConfig parses fees.mode static with explicit bps fields', () => {
         assert.equal(cfg.fees.type, 'static');
         assert.equal(cfg.fees.clankerFee, 1750);
         assert.equal(cfg.fees.pairedFee, 2250);
+        assert.equal(cfg._meta.allowCustomFeeRange, false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('loadTokenConfig enables custom fee range only via advanced.allowCustomFeeRange', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'clank-fees-allow-custom-'));
+    const tokenPath = path.join(tmpDir, 'token.json');
+
+    fs.writeFileSync(tokenPath, JSON.stringify({
+        name: 'Allow Custom Fee Token',
+        symbol: 'ACF',
+        image: 'https://example.com/allow-custom.png',
+        fees: {
+            mode: 'dynamic',
+            dynamic: {
+                baseFeePercent: 1,
+                maxFeePercent: 10
+            }
+        },
+        context: { platform: 'twitter', messageId: '123' },
+        advanced: { allowCustomFeeRange: true }
+    }));
+
+    try {
+        const cfg = loadTokenConfig(tokenPath);
         assert.equal(cfg._meta.allowCustomFeeRange, true);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });

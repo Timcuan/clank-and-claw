@@ -112,11 +112,13 @@ const printPreflight = (config) => {
     const hasSpoofSplit = Array.isArray(config?.rewards?.recipients) && config.rewards.recipients.length > 1;
     const contextSource = config?._meta?.contextSource || 'unknown';
     const contextStatus = config?.context?.messageId ? `${config.context.platform}:${config.context.messageId}` : 'missing';
+    const contextUserId = String(config?.context?.id || '').trim();
     const autoFixes = Array.isArray(config?._meta?.autoFixes) ? config._meta.autoFixes : [];
 
     console.log('🧪 Preflight Checks');
     console.log(`   Vanity: ${config?.vanity ? 'enabled' : 'disabled'}`);
     console.log(`   Context: ${contextStatus} (source: ${contextSource})`);
+    console.log(`   Context User ID: ${contextUserId || 'missing'}`);
     console.log(`   Socials: ${socialCount}`);
     console.log(`   Metadata desc length: ${String(config?.metadata?.description || '').length}`);
     console.log(`   Spoof split: ${hasSpoofSplit ? 'enabled' : 'disabled'}`);
@@ -124,6 +126,14 @@ const printPreflight = (config) => {
     if (autoFixes.length > 0) {
         const sample = autoFixes.slice(0, 3).join(' | ');
         console.log(`   Smart fix sample: ${sample}`);
+    }
+
+    const socialContextPlatform = new Set(['twitter', 'farcaster']);
+    if (socialContextPlatform.has(String(config?.context?.platform || '').toLowerCase()) && !contextUserId) {
+        console.log('   Index risk: social context user id is missing (set context.id/contextUserId).');
+    }
+    if (hasSpoofSplit && socialContextPlatform.has(String(config?.context?.platform || '').toLowerCase())) {
+        console.log('   Index risk: spoof split can break Clankerworld context matching.');
     }
 };
 
